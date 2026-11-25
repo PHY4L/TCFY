@@ -3,9 +3,13 @@ name: Android CI & APK Build
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-and-test:
@@ -37,3 +41,45 @@ jobs:
         with:
           name: TCFY-arm64-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      - name: Publish GitHub Release APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          APK_NAME="TCFY-${TAG}-arm64.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/${APK_NAME}"
+          SHA256=$(sha256sum "dist/${APK_NAME}" | awk '{print $1}')
+
+          cat <<EOF > dist/release_notes.md
+          ## 安装包下载
+
+          点击下方 **Assets** 中的 \`${APK_NAME}\` 即可直接下载安装（支持 Android 8.0 及以上、64 位 ARM64 安卓手机，无需登录 GitHub）。
+
+          ### 首次使用步骤
+          1. 下载并安装 \`${APK_NAME}\`，打开 App 后授予麦克风录音权限与通知权限（用于息屏后台保活）。
+          2. 进入底部 **「设置」** 页，下载离线语音模型（**SenseVoice-Small**、**Silero VAD**、**GTCRN 降噪**，共约 230 MB，默认走国内镜像源，也支持本地压缩包导入）。
+          3. 建议在设置页底部点击开启 **省电白名单（无限制）**，确保 45–90 分钟息屏听课不被系统杀后台。
+          4. 回到录音页点击开始即可离线实时转写；如需课后 AI 术语精修与总结，可在设置中填入任意 OpenAI 兼容 API。
+
+          ### 升级说明
+          - 从 \`v1.0.2\` 起已启用固定签名证书，后续新版本可直接覆盖安装并保留本地记录与模型。
+          - 如手机上曾安装过更早的 \`v1.0.0\` / \`v1.0.1\` 测试包，请先卸载旧版再安装本版本。
+
+          ### 校验信息
+          - **文件名**：\`${APK_NAME}\`
+          - **架构**：\`arm64-v8a\`（Android 8.0+ / API 26+）
+          - **SHA-256**：\`${SHA256}\`
+          EOF
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "dist/${APK_NAME}" --clobber
+            gh release edit "${TAG}" --title "TCFY ${TAG} (Android arm64-v8a)" --notes-file dist/release_notes.md --latest
+          else
+            gh release create "${TAG}" "dist/${APK_NAME}" \
+              --title "TCFY ${TAG} (Android arm64-v8a)" \
+              --notes-file dist/release_notes.md \
+              --latest
+          fi

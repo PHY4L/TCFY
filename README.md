@@ -2,6 +2,15 @@
 
 专为**高校教室 3–10 米远场听课场景**打造的原生 Android 应用（重点适配 **Redmi Note 11 5G / 天玑 810 / 8GB RAM** 及主流 ARM64 安卓机），面向手机自带麦克风（无需领夹麦）、中英混杂课堂与弱网/断网环境设计。
 
+## 下载与安装（Android）
+
+- **最新版本下载页（推荐）**：前往 [GitHub Releases](https://github.com/PHY4L/TCFY/releases/latest) 下载最新的 `TCFY-v*-arm64.apk`（无需登录 GitHub，点击 Assets 中的 `.apk` 即可直接下载）。
+- **直链下载（v1.0.2）**：[TCFY-v1.0.2-arm64.apk](https://github.com/PHY4L/TCFY/releases/download/v1.0.2/TCFY-v1.0.2-arm64.apk)
+- **系统要求**：Android 8.0 及以上，64 位 ARM（`arm64-v8a`，近几年主流安卓手机均支持）。
+- **安装提示**：
+  1. 首次安装需在手机上允许「安装未知来源应用」。
+  2. 安装完成后进入 App 底部 **「设置」** 页，下载离线模型（共约 230 MB，默认国内镜像源，支持本地导入）即可开始离线转写。
+
 ## 核心特性
 
 1. **教室 3–10m 远场声学前端**
