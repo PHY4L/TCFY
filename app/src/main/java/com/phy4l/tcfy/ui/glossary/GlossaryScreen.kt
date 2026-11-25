@@ -1,5 +1,6 @@
 package com.phy4l.tcfy.ui.glossary
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -64,6 +65,9 @@ fun GlossaryScreen(viewModel: TcfyViewModel) {
 
     val currentPack = selectedPack
     if (currentPack != null) {
+        BackHandler {
+            selectedPack = null
+        }
         PackTermsDetailView(
             pack = currentPack,
             viewModel = viewModel,

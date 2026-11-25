@@ -39,17 +39,23 @@ abstract class TcfyDatabase : RoomDatabase() {
 
         suspend fun seedStarterGlossariesIfEmpty(db: TcfyDatabase) {
             val dao = db.glossaryDao()
-            if (dao.countPacks() > 0) return
-            BuiltInGlossaries.ALL_STARTERS.forEachIndexed { idx, starter ->
-                val packId = dao.insertPack(
-                    GlossaryPackEntity(
-                        name = starter.name,
-                        description = starter.description,
-                        isActive = idx == 0 // Activate Physics starter pack by default
+            val existingNames = dao.getAllPacksOnce().map { it.name }.toSet()
+            val isFreshInstall = existingNames.isEmpty()
+
+            BuiltInGlossaries.ALL_STARTERS.forEach { starter ->
+                if (starter.name !in existingNames) {
+                    val shouldActivate = starter.name == BuiltInGlossaries.MOLECULAR_BIOLOGY_STARTER.name ||
+                        (isFreshInstall && starter.name == BuiltInGlossaries.PHYSICS_STARTER.name)
+                    val packId = dao.insertPack(
+                        GlossaryPackEntity(
+                            name = starter.name,
+                            description = starter.description,
+                            isActive = shouldActivate
+                        )
                     )
-                )
-                val entries = starter.terms.map { GlossaryEntryEntity.fromDomain(packId, it) }
-                dao.insertEntries(entries)
+                    val entries = starter.terms.map { GlossaryEntryEntity.fromDomain(packId, it) }
+                    dao.insertEntries(entries)
+                }
             }
         }
     }

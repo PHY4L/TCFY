@@ -1,0 +1,49 @@
+term,translation,aliases,notes
+DNA polymerase,DNA聚合酶,DNA聚合没; 聚合没; DNA聚和酶,以模板链催化脱氧核苷酸聚合合成新 DNA 链的酶
+RNA polymerase,RNA聚合酶,RNA聚合没; RNA聚和酶,催化 DNA 转录合成 RNA 的核心酶
+Helicase,解旋酶,解旋没; 解玄酶; 解选酶; helikase,消耗 ATP 解开 DNA 双螺旋氢键形成复制叉
+Topoisomerase,拓扑异构酶,拓扑异构没; 拓扑一构酶; 拓朴异构酶; topoisomerace,消除复制与转录过程中产生的 DNA 超螺旋张力
+DNA ligase,DNA连接酶,连接没; DNA连接没,催化磷酸二酯键形成连接冈崎片段
+Primase,引物酶,引物没; 引务酶,合成短链 RNA 引物为 DNA 聚合酶提供游离 3'-OH
+Replication fork,复制叉,复制差; 复制插,DNA 半保留复制时双链解开形成的 Y 形结构
+Okazaki fragment,冈崎片段,刚奇片段; 冈奇片段; 钢崎片段; okazaki,后随链不连续合成的短 DNA 片段
+Telomerase,端粒酶,端粒没; 端力酶; 断粒酶; 端立酶,维持真核染色体末端端粒长度的核糖核蛋白逆转录酶
+Chromatin,染色质,染设质; 染色只; chromatin,真核细胞核内 DNA 与组蛋白等形成的复合物
+Nucleosome,核小体,核小提; 合小体; nucleasome,约 147 bp DNA 缠绕组蛋白八聚体的染色质基本单位
+Histone,组蛋白,阻蛋白; 祖蛋白,富含碱性氨基酸的核蛋白（H2A/H2B/H3/H4/H1）
+Transcription,转录,转路; 专录,以 DNA 为模板合成 RNA 的过程
+Transcription factor,转录因子,转录音子; 转录引子,结合顺式作用元件调控 RNA 聚合酶招募的蛋白质
+Promoter,启动子,启动只; 起动子; 启动紫,位于基因上游被 RNA 聚合酶识别结合的 DNA 序列
+Enhancer,增强子,增强只; 增墙子,可远距离提高基因转录效率的顺式作用元件
+Operon,操纵子,操纵只; 操作子; 操中子,原核生物共转录基因调控单元（如 lac operon）
+Spliceosome,剪接体,简洁体; 剪接提; 减接体; splicesome,催化真核 pre-mRNA 切除内含子并连接外显子的复合物
+Intron,内含子,内含只; 内寒子; 内函子,真核基因转录后在 RNA 剪接中被切除的非编码序列
+Exon,外显子,外显只; 外线子; 外险子,经剪接保留在成熟 mRNA 中的序列
+Alternative splicing,可变剪接,可变简洁; 可变剪结,同一 pre-mRNA 产生多种成熟 mRNA 异构体
+Polyadenylation,多聚腺苷酸化,多聚腺甘酸化; 加尾修饰; polyA,真核 mRNA 3' 端加上 poly(A) 尾
+Reverse transcriptase,逆转录酶,逆转录没; 反转录没; 你转录酶,以 RNA 为模板合成 cDNA 的酶
+Ribosome,核糖体,核糖提; 合糖体; ribasome,由 rRNA 与核糖体蛋白组成的蛋白质合成场所
+Codon,密码子,密码只; 密马子,mRNA 上决定特定氨基酸或终止信号的三联体碱基
+Anticodon,反密码子,反密码只; 翻密码子,tRNA 反密码环上与密码子互补配对的三个核苷酸
+Open reading frame,开放阅读框,ORF; 开放阅读匡; 开放阅读矿,从起始密码子到终止密码子之间的连续编码区
+Chaperone,分子伴侣,分子伴旅; 分子半侣; chaperon,协助新生肽链正确折叠的蛋白质（如 Hsp70/GroEL）
+Ubiquitination,泛素化,范素化; 饭素化; 泛速化; ubiquitnation,通过 E1/E2/E3 酶级联将泛素共价连接至靶蛋白
+Proteasome,蛋白酶体,蛋白没体; 蛋白酶提; proteosome,降解多聚泛素化标记蛋白的 26S 大分子复合物
+Phosphorylation,磷酸化,林酸化; 临酸化; 磷算化; phosphorilation,激酶催化磷酸基团转移至 Ser/Thr/Tyr 残基的修饰
+Kinase,激酶,激没; 基酶; 机酶,催化底物磷酸化修饰的关键信号转导酶
+Epigenetics,表观遗传学,表观遗传; 表关遗传; 标观遗传; epigenetic,不改变 DNA 序列但可稳定遗传的基因表达调控
+DNA methylation,DNA甲基化,假基化; 甲基画; 甲机化; methylation,常发生于 CpG 岛胞嘧啶 5 位碳的甲基化修饰
+Histone acetylation,组蛋白乙酰化,乙酰化; 以酰化; 乙先化; acetylation,中和组蛋白正电荷使染色质疏松并激活转录
+microRNA,微小RNA,miRNA; 米RNA; 微RNA,约 22 nt 非编码小 RNA 介导靶 mRNA 调控
+RNA interference,RNA干扰,RNAi; siRNA; RNA干绕,双链 RNA 诱导的序列特异性基因沉默机制
+CRISPR-Cas9,CRISPR基因编辑系统,CRISPR; Cas9; 克里斯珀; 基因编集,sgRNA 引导 Cas9 精准切割靶向 DNA 的编辑系统
+PCR,聚合酶链式反应,聚合没链式反应; qPCR; RT-PCR,体外指数级扩增特定 DNA 片段的技术
+Electrophoresis,电泳,电永; 电咏; 琼脂糖凝胶电泳; SDS-PAGE,利用电场按大小与电荷分离核酸或蛋白质的技术
+Western blot,蛋白质免疫印迹,蛋白印迹; 免疫印迹; 免疫印记; western,经电泳转膜与抗体孵育检测目标蛋白表达量
+Plasmid,质粒,质立; 质利; 质粒载体,细菌染色体外可自主复制的环状双链 DNA 载体
+Restriction enzyme,限制性内切酶,限制性内切没; 内切没; 限制没,识别特定回文序列并切割 DNA 的工具酶
+Homologous recombination,同源重组,同原重组; 同源重祖; HDR,依赖同源模板精确修复 DNA 双链断裂的机制
+Apoptosis,细胞凋亡,雕亡; 细胞雕亡; apoptosis,由 Caspase 级联介导的程序性细胞死亡
+Autophagy,细胞自噬,自试; 细胞自试; autophagy,溶酶体介导降解受损细胞器与蛋白的稳态机制
+Allosteric regulation,别构调节,别构条节; 变构调节,效应分子结合非活性位点引起构象变化的调节方式
+Riboswitch,核糖开关,核糖开光; 核糖关,mRNA 5'-UTR 上直接结合小分子代谢物调控表达的元件

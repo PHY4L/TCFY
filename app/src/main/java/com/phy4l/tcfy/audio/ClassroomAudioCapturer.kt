@@ -36,6 +36,7 @@ class ClassroomAudioCapturer(
     suspend fun captureLoop(
         sourceMode: AudioSourceMode,
         isPaused: () -> Boolean,
+        shouldStop: () -> Boolean = { false },
         onPcmFrame: suspend (samples: ShortArray, count: Int) -> Unit
     ) = withContext(Dispatchers.IO) {
         val minBufBytes = AudioRecord.getMinBufferSize(
@@ -53,14 +54,15 @@ class ClassroomAudioCapturer(
         val readBuffer = ShortArray(frameSamples)
         try {
             recorder.startRecording()
-            while (currentCoroutineContext().isActive) {
+            while (currentCoroutineContext().isActive && !shouldStop()) {
                 val read = recorder.read(readBuffer, 0, readBuffer.size)
+                if (shouldStop()) break
                 if (read > 0) {
                     if (!isPaused()) {
                         onPcmFrame(readBuffer, read)
                     }
                 } else if (read < 0) {
-                    if (!currentCoroutineContext().isActive) break
+                    if (!currentCoroutineContext().isActive || shouldStop()) break
                 }
             }
         } catch (ce: CancellationException) {

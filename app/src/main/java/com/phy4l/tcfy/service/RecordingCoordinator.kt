@@ -28,6 +28,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -39,6 +40,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -73,6 +75,7 @@ class RecordingCoordinator(
     val state: StateFlow<RecordingUiState> = _state.asStateFlow()
 
     private val isPausedFlag = AtomicBoolean(false)
+    private val isStoppingFlag = AtomicBoolean(false)
     private val bookmarkNextFlag = AtomicBoolean(false)
     private val segmentIndexCounter = AtomicInteger(0)
 
@@ -84,7 +87,8 @@ class RecordingCoordinator(
     private val recordingsDir: File = File(context.filesDir, "recordings").apply { mkdirs() }
 
     /**
-     * Scans any previously interrupted WAV recordings on startup and fixes their RIFF headers.
+     * Scans any previously interrupted WAV recordings on startup, fixes their RIFF headers,
+     * and backfills durationMs in SQLite if a previous recording was stopped abruptly.
      */
     fun repairInterruptedRecordingsAsync() {
         scope.launch(Dispatchers.IO) {
@@ -92,6 +96,32 @@ class RecordingCoordinator(
                 ?.forEach { wav ->
                     runCatching { CrashSafeWavWriter.repairHeaderIfNeeded(wav) }
                 }
+
+            runCatching {
+                val sessions = database.lectureDao().getAllSessionsOnce()
+                for (session in sessions) {
+                    if (session.durationMs <= 0L || session.isRecording) {
+                        val wavFile = File(session.audioFilePath)
+                        if (wavFile.exists() && wavFile.length() > CrashSafeWavWriter.WAV_HEADER_SIZE) {
+                            CrashSafeWavWriter.repairHeaderIfNeeded(wavFile)
+                            val dataBytes = (wavFile.length() - CrashSafeWavWriter.WAV_HEADER_SIZE).coerceAtLeast(0L)
+                            // 16kHz * 1ch * 2 bytes = 32,000 bytes/sec
+                            val computedMs = (dataBytes * 1000L) / 32_000L
+                            database.lectureDao().finalizeSession(
+                                sessionId = session.id,
+                                endedAtMs = if (session.endedAtMs > 0L) session.endedAtMs else session.startedAtMs + computedMs,
+                                durationMs = computedMs
+                            )
+                        } else if (session.isRecording) {
+                            database.lectureDao().finalizeSession(
+                                sessionId = session.id,
+                                endedAtMs = System.currentTimeMillis(),
+                                durationMs = session.durationMs
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -132,6 +162,7 @@ class RecordingCoordinator(
             RecordingUiState(isInitializing = true)
         }
         isPausedFlag.set(false)
+        isStoppingFlag.set(false)
         bookmarkNextFlag.set(false)
         segmentIndexCounter.set(0)
 
@@ -266,6 +297,7 @@ class RecordingCoordinator(
                     capturer.captureLoop(
                         sourceMode = settings.dspConfig.audioSourceMode,
                         isPaused = { isPausedFlag.get() },
+                        shouldStop = { isStoppingFlag.get() },
                         onPcmFrame = { pcm, count ->
                             // 1. Always persist raw untouched audio to disk FIRST
                             wavWriter.writePcm16(pcm, count)
@@ -304,9 +336,14 @@ class RecordingCoordinator(
                                     if (partialCount >= 16000 * 2 && nowMs - lastPartialDecodeMs > 1800L && asrEngine != null) {
                                         lastPartialDecodeMs = nowMs
                                         val previewSlice = partialBuffer.copyOf(partialCount)
-                                        val preview = runCatching { asrEngine.transcribe(previewSlice, 16000).text }.getOrDefault("")
-                                        if (preview.isNotBlank()) {
-                                            _state.update { it.copy(partialTranscript = preview) }
+                                        val previewRes = runCatching { asrEngine.transcribe(previewSlice, 16000) }.getOrNull()
+                                        if (previewRes != null && SherpaSenseVoiceEngine.isMeaningfulSpeech(
+                                                previewRes.text,
+                                                previewRes.detectedLanguage,
+                                                settings.asrLanguageMode
+                                            )
+                                        ) {
+                                            _state.update { it.copy(partialTranscript = previewRes.text) }
                                         }
                                     }
                                 } else {
@@ -322,8 +359,12 @@ class RecordingCoordinator(
                             }
                         }
                     )
+                    // Normal cooperative stop -> flush remaining speech tail
+                    if (vadEngine != null) {
+                        val remaining = runCatching { vadEngine.flush() }.getOrDefault(emptyList())
+                        remaining.forEach { chunkChannel.trySend(it) }
+                    }
                 } catch (ce: CancellationException) {
-                    // Normal stop requested -> flush remaining speech tail
                     if (vadEngine != null) {
                         val remaining = runCatching { vadEngine.flush() }.getOrDefault(emptyList())
                         remaining.forEach { chunkChannel.trySend(it) }
@@ -332,39 +373,69 @@ class RecordingCoordinator(
                 } catch (t: Throwable) {
                     _state.update { it.copy(errorMessage = "录音异常: ${t.message}") }
                 } finally {
-                    chunkChannel.close()
-                    val finalDuration = wavWriter.durationMs()
-                    runCatching { wavWriter.close() }
-                    runCatching { vadEngine?.close() }
-                    runCatching { gtcrnEnhancer?.close() }
-                    dspPipeline = null
+                    // CRITICAL: Must run in NonCancellable so cancelling captureJob never aborts
+                    // DB duration persistence or UI state reset!
+                    withContext(NonCancellable) {
+                        chunkChannel.close()
+                        val finalDuration = wavWriter.durationMs()
+                        runCatching { wavWriter.close() }
+                        runCatching { vadEngine?.close() }
+                        runCatching { gtcrnEnhancer?.close() }
+                        dspPipeline = null
 
-                    // Wait briefly for remaining queued ASR segments to finish writing to DB
-                    runCatching { asrWorkerJob?.join() }
-                    database.lectureDao().finalizeSession(
-                        sessionId = sessionId,
-                        endedAtMs = System.currentTimeMillis(),
-                        durationMs = finalDuration
-                    )
-                    timerJob?.cancel()
-                    _state.value = RecordingUiState()
+                        // Wait briefly for remaining queued ASR segments to finish writing to DB
+                        withTimeoutOrNull(4_000L) {
+                            runCatching { asrWorkerJob?.join() }
+                        }
+                        runCatching {
+                            database.lectureDao().finalizeSession(
+                                sessionId = sessionId,
+                                endedAtMs = System.currentTimeMillis(),
+                                durationMs = finalDuration
+                            )
+                        }
+                        timerJob?.cancel()
+                        timerJob = null
+                        isPausedFlag.set(false)
+                        isStoppingFlag.set(false)
+                        _state.value = RecordingUiState()
+                    }
                 }
             }
 
             sessionId
         }.onFailure { err ->
+            isStoppingFlag.set(false)
             _state.value = RecordingUiState(errorMessage = err.message ?: "启动录音失败")
         }
     }
 
     suspend fun stopSession() {
-        val job = captureJob
-        captureJob = null
+        isStoppingFlag.set(true)
         timerJob?.cancel()
         timerJob = null
-        job?.cancel()
-        runCatching { job?.join() }
-        asrWorkerJob = null
+        val job = captureJob
+        captureJob = null
+        try {
+            if (job != null) {
+                // Give cooperative stop up to 2.5s to exit AudioRecord.read & flush cleanly
+                val finishedCleanly = withTimeoutOrNull(2_500L) {
+                    job.join()
+                    true
+                } ?: false
+                if (!finishedCleanly) {
+                    job.cancel()
+                    withTimeoutOrNull(3_000L) {
+                        runCatching { job.join() }
+                    }
+                }
+            }
+        } finally {
+            asrWorkerJob = null
+            isPausedFlag.set(false)
+            isStoppingFlag.set(false)
+            _state.value = RecordingUiState()
+        }
     }
 
     /**
@@ -445,7 +516,12 @@ class RecordingCoordinator(
                     onProgress(pct, "离线重转写中 (${idx + 1}/${chunks.size})...")
 
                     val asrRes = asr.transcribe(chunk.samples, 16000)
-                    if (asrRes.text.isBlank()) return@forEachIndexed
+                    if (!SherpaSenseVoiceEngine.isMeaningfulSpeech(
+                            asrRes.text,
+                            asrRes.detectedLanguage,
+                            settings.asrLanguageMode
+                        )
+                    ) return@forEachIndexed
 
                     val correction = corrector.correct(asrRes.text)
                     val offlineTrans = translationRouter.translateLive(
@@ -490,7 +566,12 @@ class RecordingCoordinator(
         activeTerms: List<GlossaryTerm>
     ) {
         val asrRes = runCatching { asrEngine.transcribe(chunk.samples, 16000) }.getOrNull() ?: return
-        if (asrRes.text.isBlank()) return
+        if (!SherpaSenseVoiceEngine.isMeaningfulSpeech(
+                asrRes.text,
+                asrRes.detectedLanguage,
+                settingsSnapshot.asrLanguageMode
+            )
+        ) return
 
         _state.update { it.copy(lastInferenceMs = asrRes.inferenceTimeMs) }
 

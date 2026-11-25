@@ -57,11 +57,15 @@ data class GlossaryEntryEntity(
 }
 
 @Serializable
-enum class TranslationDirection(val displayName: String, val targetLangLabel: String) {
-    AUTO_BILINGUAL("自动互译 (中↔英)", "自动"),
-    EN_TO_ZH("英 → 中", "简体中文"),
-    ZH_TO_EN("中 → 英", "English"),
-    OFF("仅转写不翻译", "关闭")
+enum class TranslationDirection(
+    val displayName: String,
+    val shortLabel: String,
+    val targetLangLabel: String
+) {
+    AUTO_BILINGUAL("自动互译 (中↔英)", "中↔英", "自动"),
+    EN_TO_ZH("英 → 中", "英→中", "简体中文"),
+    ZH_TO_EN("中 → 英", "中→英", "English"),
+    OFF("仅转写不翻译", "仅转写", "关闭")
 }
 
 object SegmentSyncStatus {

@@ -14,6 +14,9 @@ interface GlossaryDao {
     @Query("SELECT * FROM glossary_packs ORDER BY isActive DESC, createdAtMs DESC")
     fun observeAllPacks(): Flow<List<GlossaryPackEntity>>
 
+    @Query("SELECT * FROM glossary_packs")
+    suspend fun getAllPacksOnce(): List<GlossaryPackEntity>
+
     @Query("SELECT * FROM glossary_packs WHERE isActive = 1")
     suspend fun getActivePacks(): List<GlossaryPackEntity>
 
@@ -76,6 +79,9 @@ interface LectureDao {
 
     @Query("SELECT * FROM lecture_sessions ORDER BY startedAtMs DESC")
     fun observeAllSessions(): Flow<List<LectureSessionEntity>>
+
+    @Query("SELECT * FROM lecture_sessions")
+    suspend fun getAllSessionsOnce(): List<LectureSessionEntity>
 
     @Query(
         """

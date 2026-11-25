@@ -88,11 +88,35 @@ class SherpaSenseVoiceEngine(
 
     companion object {
         private val SENSEVOICE_TAG_REGEX = Regex("<\\|[^|]+\\|>")
+        private val PUNCT_AND_SPACE_REGEX = Regex("[\\p{P}\\p{S}\\s]+")
 
         fun cleanSenseVoiceTags(raw: String): String {
             return raw.replace(SENSEVOICE_TAG_REGEX, "")
                 .replace(Regex("\\s{2,}"), " ")
                 .trim()
+        }
+
+        /**
+         * Rejects pure-punctuation hallucinations (e.g. ".", "?") and stray 1-char Hangul/Kana
+         * noise hallucinations that SenseVoice sometimes emits in noisy cafeterias under auto mode.
+         */
+        fun isMeaningfulSpeech(
+            text: String,
+            detectedLang: String = "",
+            requestedMode: AsrLanguageMode = AsrLanguageMode.AUTO
+        ): Boolean {
+            val contentOnly = text.replace(PUNCT_AND_SPACE_REGEX, "")
+            if (contentOnly.isEmpty()) return false
+            // Drop single-character non-ZH/EN noise artifacts (e.g. Korean "그." or single "I.")
+            if (requestedMode == AsrLanguageMode.AUTO && contentOnly.length == 1) {
+                val ch = contentOnly[0]
+                val isHangul = ch.code in 0xAC00..0xD7AF || ch.code in 0x1100..0x11FF
+                val isKana = ch.code in 0x3040..0x30FF
+                if (isHangul || isKana || detectedLang.equals("ko", ignoreCase = true) || detectedLang.equals("ja", ignoreCase = true)) {
+                    return false
+                }
+            }
+            return true
         }
     }
 }

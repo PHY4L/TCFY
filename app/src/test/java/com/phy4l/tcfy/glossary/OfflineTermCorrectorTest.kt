@@ -70,4 +70,26 @@ class OfflineTermCorrectorTest {
         assertEquals(sentence, res.correctedText)
         assertFalse(res.hasChanges)
     }
+
+    @Test
+    fun correctsMolecularBiologyTermsAndAvoidsFalsePositives() {
+        val corrector = OfflineTermCorrector(BuiltInGlossaries.MOLECULAR_BIOLOGY_STARTER.terms)
+        val res = corrector.correct("真核生物通过简洁体切除内含只，并由端粒没和拓扑异构没维持染色体稳定。")
+        assertTrue(res.correctedText.contains("Spliceosome"))
+        assertTrue(res.correctedText.contains("Intron"))
+        assertTrue(res.correctedText.contains("Telomerase"))
+        assertTrue(res.correctedText.contains("Topoisomerase"))
+
+        val normal = "人工智能的智力水平各自是不一样的。"
+        assertEquals(normal, corrector.correct(normal).correctedText)
+    }
+
+    @Test
+    fun senseVoiceHallucinationFilterDropsPunctuationAndStrayHangul() {
+        assertFalse(com.phy4l.tcfy.asr.SherpaSenseVoiceEngine.isMeaningfulSpeech(".", "en"))
+        assertFalse(com.phy4l.tcfy.asr.SherpaSenseVoiceEngine.isMeaningfulSpeech("...", "zh"))
+        assertFalse(com.phy4l.tcfy.asr.SherpaSenseVoiceEngine.isMeaningfulSpeech("그.", "ko"))
+        assertTrue(com.phy4l.tcfy.asr.SherpaSenseVoiceEngine.isMeaningfulSpeech("转录因子结合启动子。", "zh"))
+        assertTrue(com.phy4l.tcfy.asr.SherpaSenseVoiceEngine.isMeaningfulSpeech("CRISPR-Cas9", "en"))
+    }
 }

@@ -3,6 +3,7 @@ package com.phy4l.tcfy.ui
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
@@ -90,6 +91,9 @@ fun TcfyApp(viewModel: TcfyViewModel = viewModel()) {
 
     val detailId = openSessionId
     if (detailId != null) {
+        BackHandler {
+            openSessionId = null
+        }
         Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { innerPadding ->
             Box(modifier = Modifier.padding(innerPadding)) {
                 SessionDetailScreen(
@@ -100,6 +104,11 @@ fun TcfyApp(viewModel: TcfyViewModel = viewModel()) {
             }
         }
         return
+    }
+
+    // Pressing back on History / Glossary / Settings returns to main Record tab before exiting
+    BackHandler(enabled = selectedTab != 0) {
+        selectedTab = 0
     }
 
     Scaffold(

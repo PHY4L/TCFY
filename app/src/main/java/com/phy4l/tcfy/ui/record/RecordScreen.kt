@@ -117,21 +117,23 @@ fun RecordScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                 Text(
                     text = "教室远场听译",
                     style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
                 )
                 val activePackCount = packs.count { it.isActive }
                 Text(
                     text = if (recState.isRecording) {
                         recState.asrModeLabel
                     } else {
-                        "已启用 $activePackCount 个术语库 · 断网全程可用"
+                        "已启用 $activePackCount 个术语库 · 断网可用"
                     },
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
                 )
             }
 
@@ -139,7 +141,7 @@ fun RecordScreen(
                 Box {
                     AssistChip(
                         onClick = { showDirectionMenu = true },
-                        label = { Text(settings.translationDirection.displayName, fontSize = 12.sp) },
+                        label = { Text(settings.translationDirection.shortLabel, fontSize = 12.sp) },
                         leadingIcon = {
                             Icon(Icons.Default.Translate, contentDescription = null, modifier = Modifier.size(16.dp))
                         }
