@@ -1,6 +1,7 @@
 package com.phy4l.tcfy.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.BackHandler
@@ -27,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -50,15 +52,14 @@ private enum class MainTab(val label: String, val icon: ImageVector) {
 fun TcfyApp(viewModel: TcfyViewModel = viewModel()) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
-    val toastMsg by viewModel.toastMessage.collectAsState()
+    val recState by viewModel.recordingState.collectAsState()
 
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var openSessionId by remember { mutableStateOf<Long?>(null) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var openSessionId by rememberSaveable { mutableStateOf<Long?>(null) }
 
-    LaunchedEffect(toastMsg) {
-        toastMsg?.let { msg ->
+    LaunchedEffect(Unit) {
+        viewModel.toastMessages.collect { msg ->
             snackbarHostState.showSnackbar(msg)
-            viewModel.consumeToast()
         }
     }
 
@@ -109,6 +110,12 @@ fun TcfyApp(viewModel: TcfyViewModel = viewModel()) {
     // Pressing back on History / Glossary / Settings returns to main Record tab before exiting
     BackHandler(enabled = selectedTab != 0) {
         selectedTab = 0
+    }
+
+    // While actively recording on tab 0, back gesture minimizes to background instead of destroying Activity
+    BackHandler(enabled = selectedTab == 0 && recState.isRecording) {
+        viewModel.notifyMovedToBackground()
+        (context as? Activity)?.moveTaskToBack(true)
     }
 
     Scaffold(

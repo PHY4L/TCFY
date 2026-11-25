@@ -3,7 +3,6 @@ package com.phy4l.tcfy.ui.settings
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -17,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -43,6 +45,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,7 +56,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.phy4l.tcfy.ai.LlmPresets
 import com.phy4l.tcfy.asr.AsrLanguageMode
 import com.phy4l.tcfy.asr.ModelCatalog
@@ -68,6 +75,7 @@ import kotlin.math.roundToInt
 @Composable
 fun SettingsScreen(viewModel: TcfyViewModel) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val settings by viewModel.settings.collectAsState()
     val modelStates by viewModel.modelStates.collectAsState()
 
@@ -82,20 +90,37 @@ fun SettingsScreen(viewModel: TcfyViewModel) {
         pendingImportModel = null
     }
 
+    // Auto-refresh MIUI battery optimization whitelist state when returning from system settings
+    var isIgnoringBatteryOpt by remember {
+        mutableStateOf(
+            context.getSystemService(PowerManager::class.java)
+                ?.isIgnoringBatteryOptimizations(context.packageName) == true
+        )
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isIgnoringBatteryOpt = context.getSystemService(PowerManager::class.java)
+                    ?.isIgnoringBatteryOptimizations(context.packageName) == true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     // Local editable state for LLM API form
     var providerName by remember(settings.llmConfig.providerName) { mutableStateOf(settings.llmConfig.providerName) }
     var baseUrl by remember(settings.llmConfig.baseUrl) { mutableStateOf(settings.llmConfig.baseUrl) }
     var apiKey by remember(settings.llmConfig.apiKey) { mutableStateOf(settings.llmConfig.apiKey) }
+    var showApiKey by remember { mutableStateOf(false) }
     var modelName by remember(settings.llmConfig.modelName) { mutableStateOf(settings.llmConfig.modelName) }
-    var liveOnlineTrans by remember(settings.llmConfig.enableLiveOnlineTranslation) {
-        mutableStateOf(settings.llmConfig.enableLiveOnlineTranslation)
-    }
     var testResultText by remember { mutableStateOf<String?>(null) }
     var isTestingApi by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -163,7 +188,10 @@ fun SettingsScreen(viewModel: TcfyViewModel) {
 
             Spacer(modifier = Modifier.height(6.dp))
             Text("GTCRN 神经网络降噪强度", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 DenoiseLevel.entries.forEach { level ->
                     FilterChip(
                         selected = settings.dspConfig.denoiseLevel == level,
@@ -230,7 +258,10 @@ fun SettingsScreen(viewModel: TcfyViewModel) {
 
             Spacer(modifier = Modifier.height(6.dp))
             Text("离线推理 CPU 线程数（红米 Note 11 5G 推荐 4 线程）", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 listOf(2, 4, 6).forEach { t ->
                     FilterChip(
                         selected = settings.asrThreads == t,
@@ -271,8 +302,16 @@ fun SettingsScreen(viewModel: TcfyViewModel) {
             OutlinedTextField(
                 value = apiKey,
                 onValueChange = { apiKey = it },
-                label = { Text("API Key（仅存本机，不上传第三方）") },
-                visualTransformation = PasswordVisualTransformation(),
+                label = { Text("API Key（仅存本机，不上传云备份）") },
+                visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { showApiKey = !showApiKey }) {
+                        Icon(
+                            imageVector = if (showApiKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = if (showApiKey) "隐藏 API Key" else "显示 API Key"
+                        )
+                    }
+                },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -292,14 +331,14 @@ fun SettingsScreen(viewModel: TcfyViewModel) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("有网时开启实时 AI 翻译", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "超时 4 秒或断网会自动无缝降级为离线术语注译，绝不丢字",
+                        "即时生效；超时 4 秒或断网自动无缝降级为离线术语注译，绝不丢字",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Switch(
-                    checked = liveOnlineTrans,
-                    onCheckedChange = { liveOnlineTrans = it }
+                    checked = settings.llmConfig.enableLiveOnlineTranslation,
+                    onCheckedChange = { viewModel.updateLiveOnlineTranslation(it) }
                 )
             }
 
@@ -311,8 +350,7 @@ fun SettingsScreen(viewModel: TcfyViewModel) {
                                 providerName = providerName,
                                 baseUrl = baseUrl,
                                 apiKey = apiKey,
-                                modelName = modelName,
-                                enableLiveOnlineTranslation = liveOnlineTrans
+                                modelName = modelName
                             )
                         )
                     },
@@ -353,10 +391,8 @@ fun SettingsScreen(viewModel: TcfyViewModel) {
 
         // Section 4: Redmi / MIUI / HyperOS Keep-Alive Helper
         SectionCard(title = "4. 红米 MIUI / HyperOS 息屏防杀设置") {
-            val pm = context.getSystemService(PowerManager::class.java)
-            val isIgnoring = pm?.isIgnoringBatteryOptimizations(context.packageName) == true
             Text(
-                text = if (isIgnoring) {
+                text = if (isIgnoringBatteryOpt) {
                     "已加入系统电池优化白名单，可放心息屏录制 90 分钟大课。"
                 } else {
                     "建议将「省电策略」设为「无限制」，避免 MIUI 在息屏听课 10 分钟后冻结录音。"
@@ -370,7 +406,7 @@ fun SettingsScreen(viewModel: TcfyViewModel) {
             ) {
                 Icon(Icons.Default.BatteryChargingFull, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(if (isIgnoring) "查看电池优化设置" else "一键前往设置省电白名单")
+                Text(if (isIgnoringBatteryOpt) "查看电池优化设置" else "一键前往设置省电白名单")
             }
         }
 
@@ -493,14 +529,8 @@ private fun ModelItemRow(
 
 @SuppressLint("BatteryLife")
 private fun openBatteryExemptionSettings(context: android.content.Context) {
-    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-            data = Uri.parse("package:${context.packageName}")
-        }
-    } else {
-        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.parse("package:${context.packageName}")
-        }
+    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+        data = Uri.parse("package:${context.packageName}")
     }
     runCatching {
         context.startActivity(intent)

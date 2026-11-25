@@ -174,10 +174,7 @@ class ModelManager(
             } else {
                 val missing = (listOf(descriptor.primaryFileName) + descriptor.extraRequiredFiles)
                     .filterNot { File(targetDir, it).exists() }
-                updateState(
-                    descriptor.id,
-                    ModelInstallState.Error("已导入部分文件，还缺少: ${missing.joinToString(", ")}")
-                )
+                throw IllegalStateException("已导入部分文件，还缺少: ${missing.joinToString(", ")}")
             }
         }.onFailure { err ->
             updateState(descriptor.id, ModelInstallState.Error(err.message ?: "导入失败"))

@@ -30,6 +30,7 @@ import com.phy4l.tcfy.service.RecordingForegroundService
 import com.phy4l.tcfy.service.RecordingUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -37,7 +38,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -90,18 +93,20 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private val _detailTaskState = MutableStateFlow(DetailTaskState())
-    val detailTaskState: StateFlow<DetailTaskState> = _detailTaskState.asStateFlow()
+    private val _detailTaskStates = MutableStateFlow<Map<Long, DetailTaskState>>(emptyMap())
+    val detailTaskStates: StateFlow<Map<Long, DetailTaskState>> = _detailTaskStates.asStateFlow()
 
-    private val _toastMessage = MutableStateFlow<String?>(null)
-    val toastMessage: StateFlow<String?> = _toastMessage.asStateFlow()
+    private val _toastChannel = Channel<String>(Channel.BUFFERED)
+    val toastMessages: Flow<String> = _toastChannel.receiveAsFlow()
 
-    fun consumeToast() {
-        _toastMessage.value = null
-    }
+    private var lastStartClickMs: Long = 0L
 
     private fun postToast(msg: String) {
-        _toastMessage.value = msg
+        _toastChannel.trySend(msg)
+    }
+
+    private fun updateTaskState(sessionId: Long, state: DetailTaskState) {
+        _detailTaskStates.update { it + (sessionId to state) }
     }
 
     fun isCoreAsrReady(): Boolean = modelManager.isCoreAsrReady()
@@ -109,6 +114,12 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
     // --- Recording Controls ---
 
     fun startRecording(customTitle: String? = null) {
+        val now = System.currentTimeMillis()
+        val cur = recordingState.value
+        if (cur.isRecording || cur.isInitializing || now - lastStartClickMs < 800L) {
+            return
+        }
+        lastStartClickMs = now
         RecordingForegroundService.start(app, customTitle)
     }
 
@@ -127,6 +138,10 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearRecordingError() {
         coordinator.clearError()
+    }
+
+    fun notifyMovedToBackground() {
+        postToast("录音已转入后台继续运行")
     }
 
     // --- Sessions & Detail ---
@@ -149,6 +164,10 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteSession(session: LectureSessionEntity) {
+        if (session.isRecording || session.id == recordingState.value.activeSessionId) {
+            postToast("该课程正在录制中，请先停止录音后再删除")
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             db.lectureDao().deleteSession(session)
             runCatching { File(session.audioFilePath).delete() }
@@ -169,16 +188,16 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refineSessionWithAi(sessionId: Long) {
-        if (_detailTaskState.value.isBusy) return
+        if (_detailTaskStates.value[sessionId]?.isBusy == true) return
         viewModelScope.launch {
-            _detailTaskState.value = DetailTaskState(isBusy = true, progress = 0.05f, statusText = "准备连接大模型进行术语精修...")
+            updateTaskState(sessionId, DetailTaskState(isBusy = true, progress = 0.05f, statusText = "准备连接大模型进行术语精修..."))
             val session = withContext(Dispatchers.IO) { db.lectureDao().getSession(sessionId) }
             val segs = withContext(Dispatchers.IO) { db.lectureDao().getSegments(sessionId) }
             val terms = withContext(Dispatchers.IO) { db.glossaryDao().getActiveEntries().map { it.toDomain() } }
             val curSettings = settings.value
 
             if (session == null || segs.isEmpty()) {
-                _detailTaskState.value = DetailTaskState(errorText = "没有可精修的转写段落")
+                updateTaskState(sessionId, DetailTaskState(errorText = "没有可精修的转写段落"))
                 return@launch
             }
 
@@ -204,36 +223,39 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
                 },
                 onProgress = { prog: RefinementProgress ->
                     val frac = if (prog.totalCount > 0) prog.completedCount.toFloat() / prog.totalCount else 0f
-                    _detailTaskState.value = DetailTaskState(
-                        isBusy = true,
-                        progress = frac,
-                        statusText = prog.statusMessage
+                    updateTaskState(
+                        sessionId,
+                        DetailTaskState(
+                            isBusy = true,
+                            progress = frac,
+                            statusText = prog.statusMessage
+                        )
                     )
                 }
             )
 
             res.fold(
                 onSuccess = { count ->
-                    _detailTaskState.value = DetailTaskState()
+                    updateTaskState(sessionId, DetailTaskState())
                     postToast(if (count > 0) "AI 术语精修完成（更新 $count 段）" else "全部段落已精修完成")
                 },
                 onFailure = { err ->
-                    _detailTaskState.value = DetailTaskState(errorText = err.message)
+                    updateTaskState(sessionId, DetailTaskState(errorText = err.message))
                 }
             )
         }
     }
 
     fun generateAiSummary(sessionId: Long) {
-        if (_detailTaskState.value.isBusy) return
+        if (_detailTaskStates.value[sessionId]?.isBusy == true) return
         viewModelScope.launch {
-            _detailTaskState.value = DetailTaskState(isBusy = true, progress = 0.2f, statusText = "正在生成 AI 课堂总结...")
+            updateTaskState(sessionId, DetailTaskState(isBusy = true, progress = 0.2f, statusText = "正在生成 AI 课堂总结..."))
             val session = withContext(Dispatchers.IO) { db.lectureDao().getSession(sessionId) }
             val segs = withContext(Dispatchers.IO) { db.lectureDao().getSegments(sessionId) }
             val terms = withContext(Dispatchers.IO) { db.glossaryDao().getActiveEntries().map { it.toDomain() } }
 
             if (session == null) {
-                _detailTaskState.value = DetailTaskState(errorText = "找不到课堂会话")
+                updateTaskState(sessionId, DetailTaskState(errorText = "找不到课堂会话"))
                 return@launch
             }
 
@@ -243,44 +265,45 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
                 terms = terms,
                 llmConfig = settings.value.llmConfig,
                 onStatus = { status ->
-                    _detailTaskState.value = DetailTaskState(isBusy = true, progress = 0.6f, statusText = status)
+                    updateTaskState(sessionId, DetailTaskState(isBusy = true, progress = 0.6f, statusText = status))
                 }
             )
 
             res.fold(
                 onSuccess = { md ->
                     withContext(Dispatchers.IO) { db.lectureDao().updateSummary(sessionId, md) }
-                    _detailTaskState.value = DetailTaskState()
+                    updateTaskState(sessionId, DetailTaskState())
                     postToast("AI 课堂总结已生成并保存")
                 },
                 onFailure = { err ->
-                    _detailTaskState.value = DetailTaskState(errorText = err.message)
+                    updateTaskState(sessionId, DetailTaskState(errorText = err.message))
                 }
             )
         }
     }
 
     fun retranscribeOffline(sessionId: Long) {
-        if (_detailTaskState.value.isBusy) return
+        if (_detailTaskStates.value[sessionId]?.isBusy == true) return
         viewModelScope.launch {
-            _detailTaskState.value = DetailTaskState(isBusy = true, progress = 0.05f, statusText = "启动离线重转写...")
+            updateTaskState(sessionId, DetailTaskState(isBusy = true, progress = 0.05f, statusText = "启动离线重转写..."))
             val res = coordinator.retranscribeSessionOffline(sessionId) { pct, msg ->
-                _detailTaskState.value = DetailTaskState(isBusy = true, progress = pct, statusText = msg)
+                updateTaskState(sessionId, DetailTaskState(isBusy = true, progress = pct, statusText = msg))
             }
             res.fold(
                 onSuccess = { count ->
-                    _detailTaskState.value = DetailTaskState()
+                    updateTaskState(sessionId, DetailTaskState())
                     postToast("离线重转写完成，共 $count 段")
                 },
                 onFailure = { err ->
-                    _detailTaskState.value = DetailTaskState(errorText = err.message)
+                    updateTaskState(sessionId, DetailTaskState(errorText = err.message))
                 }
             )
         }
     }
 
-    fun clearDetailTaskError() {
-        _detailTaskState.value = _detailTaskState.value.copy(errorText = null)
+    fun clearDetailTaskError(sessionId: Long) {
+        val cur = _detailTaskStates.value[sessionId] ?: return
+        updateTaskState(sessionId, cur.copy(errorText = null))
     }
 
     fun exportAndShareSession(sessionId: Long, format: String) {
@@ -477,6 +500,13 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             settingsRepo.updateLlmConfig(config)
             postToast("API 配置已保存")
+        }
+    }
+
+    fun updateLiveOnlineTranslation(enabled: Boolean) {
+        viewModelScope.launch {
+            val current = settings.value.llmConfig
+            settingsRepo.updateLlmConfig(current.copy(enableLiveOnlineTranslation = enabled))
         }
     }
 

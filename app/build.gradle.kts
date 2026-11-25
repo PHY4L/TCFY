@@ -14,8 +14,8 @@ android {
         applicationId = "com.phy4l.tcfy"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -23,6 +23,15 @@ android {
             // Redmi Note 11 5G (Dimensity 810) and almost all modern Android phones use arm64-v8a.
             // Filtering keeps APK compact while keeping full NEON performance.
             abiFilters += listOf("arm64-v8a")
+        }
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
         }
     }
 
@@ -36,6 +45,7 @@ android {
             )
         }
         debug {
+            signingConfig = signingConfigs.getByName("debug")
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
         }

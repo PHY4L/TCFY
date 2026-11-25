@@ -39,6 +39,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
@@ -74,13 +76,16 @@ class RecordingCoordinator(
     private val _state = MutableStateFlow(RecordingUiState())
     val state: StateFlow<RecordingUiState> = _state.asStateFlow()
 
+    private val lifecycleMutex = Mutex()
     private val isPausedFlag = AtomicBoolean(false)
     private val isStoppingFlag = AtomicBoolean(false)
+    private val isMainAsrBusy = AtomicBoolean(false)
     private val bookmarkNextFlag = AtomicBoolean(false)
     private val segmentIndexCounter = AtomicInteger(0)
 
     private var captureJob: Job? = null
     private var asrWorkerJob: Job? = null
+    private var partialPreviewJob: Job? = null
     private var timerJob: Job? = null
     private var dspPipeline: FarFieldDspPipeline? = null
 
@@ -153,48 +158,33 @@ class RecordingCoordinator(
         _state.update { it.copy(errorMessage = null) }
     }
 
-    suspend fun startSession(customTitle: String? = null): Result<Long> {
+    suspend fun startSession(customTitle: String? = null): Result<Long> = lifecycleMutex.withLock {
         if (_state.value.isRecording || _state.value.isInitializing) {
-            return Result.failure(IllegalStateException("正在录制中"))
+            return@withLock Result.failure(IllegalStateException("正在录制中"))
         }
 
-        _state.update {
-            RecordingUiState(isInitializing = true)
-        }
+        _state.value = RecordingUiState(isInitializing = true)
         isPausedFlag.set(false)
         isStoppingFlag.set(false)
+        isMainAsrBusy.set(false)
         bookmarkNextFlag.set(false)
         segmentIndexCounter.set(0)
 
-        return runCatching {
+        var asrEngine: OfflineAsrEngine? = null
+        var vadEngine: VadSegmenter? = null
+        var gtcrnEnhancer: SpeechEnhancer? = null
+
+        return@withLock runCatching {
             val settings = settingsRepo.settingsFlow.first()
             val activePacks = database.glossaryDao().getActivePacks()
-            val activeTerms = database.glossaryDao().getActiveEntries().map { it.toDomain() }
             val glossaryNames = activePacks.joinToString("、") { it.name }
 
             val now = System.currentTimeMillis()
             val stamp = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(now))
-            val fileStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(now))
+            val fileStamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date(now))
             val title = customTitle?.takeIf { it.isNotBlank() } ?: "课堂记录 $stamp"
             val wavFile = File(recordingsDir, "lecture_$fileStamp.wav")
 
-            val sessionId = database.lectureDao().insertSession(
-                LectureSessionEntity(
-                    title = title,
-                    audioFilePath = wavFile.absolutePath,
-                    startedAtMs = now,
-                    asrLanguageCode = settings.asrLanguageMode.code,
-                    translationDirection = settings.translationDirection.name,
-                    acousticPresetName = settings.acousticPresetName,
-                    isRecording = true,
-                    glossarySnapshotName = glossaryNames
-                )
-            )
-
-            // Load offline models if installed; if not yet installed, still record audio safely!
-            val asrEngine: OfflineAsrEngine?
-            val vadEngine: VadSegmenter?
-            var gtcrnEnhancer: SpeechEnhancer? = null
             var warningMsg: String? = null
             var asrLabel = "仅录音保底（待下载离线模型）"
 
@@ -207,6 +197,9 @@ class RecordingCoordinator(
                         numThreads = settings.asrThreads
                     )
                 }
+                if (isStoppingFlag.get()) {
+                    throw CancellationException("初始化期间用户已取消录音")
+                }
                 vadEngine = withContext(Dispatchers.IO) {
                     SherpaSileroVadEngine(
                         sileroModelFile = modelManager.getPrimaryModelFile(ModelCatalog.SILERO_VAD),
@@ -214,6 +207,9 @@ class RecordingCoordinator(
                         minSilenceDurationSec = settings.dspConfig.vadMinSilenceSec,
                         maxSpeechDurationSec = settings.dspConfig.vadMaxSpeechSec
                     )
+                }
+                if (isStoppingFlag.get()) {
+                    throw CancellationException("初始化期间用户已取消录音")
                 }
                 if (settings.dspConfig.denoiseLevel != DenoiseLevel.OFF &&
                     modelManager.isInstalled(ModelCatalog.GTCRN_DENOISER)
@@ -230,20 +226,39 @@ class RecordingCoordinator(
                     "离线 SenseVoice (DSP 远场增益)"
                 }
             } else {
-                asrEngine = null
-                vadEngine = null
-                warningMsg = "未安装离线语音模型：当前已开启原始远场录音保底，课后在「模型与设置」下载模型即可一键离线转写。"
+                warningMsg = "未安装离线语音模型：当前已开启原始远场录音保底，课后在「模型设置」下载模型即可一键离线转写。"
             }
 
+            if (isStoppingFlag.get()) {
+                throw CancellationException("初始化期间用户已取消录音")
+            }
+
+            val sessionId = database.lectureDao().insertSession(
+                LectureSessionEntity(
+                    title = title,
+                    audioFilePath = wavFile.absolutePath,
+                    startedAtMs = now,
+                    asrLanguageCode = settings.asrLanguageMode.code,
+                    translationDirection = settings.translationDirection.name,
+                    acousticPresetName = settings.acousticPresetName,
+                    isRecording = true,
+                    glossarySnapshotName = glossaryNames
+                )
+            )
+
+            val loadedAsr = asrEngine
+            val loadedVad = vadEngine
+            val loadedGtcrn = gtcrnEnhancer
             val wavWriter = CrashSafeWavWriter(wavFile)
             val pipeline = FarFieldDspPipeline(
                 sampleRate = 16000,
                 initialConfig = settings.dspConfig,
-                speechEnhancer = gtcrnEnhancer
+                speechEnhancer = loadedGtcrn
             )
             dspPipeline = pipeline
 
             val chunkChannel = Channel<VadSpeechChunk>(capacity = 32)
+            val previewChannel = Channel<FloatArray>(capacity = Channel.CONFLATED)
             val capturer = ClassroomAudioCapturer(sampleRate = 16000, frameSamples = 320)
 
             _state.value = RecordingUiState(
@@ -266,31 +281,59 @@ class RecordingCoordinator(
                 }
             }
 
+            // Dedicated low-priority partial preview worker so AudioRecord capture thread NEVER blocks
+            partialPreviewJob = scope.launch(Dispatchers.Default) {
+                if (loadedAsr == null) return@launch
+                for (previewSlice in previewChannel) {
+                    if (isStoppingFlag.get() || isMainAsrBusy.get()) continue
+                    val previewRes = runCatching { loadedAsr.transcribe(previewSlice, 16000) }.getOrNull()
+                    if (previewRes != null &&
+                        !isStoppingFlag.get() &&
+                        _state.value.isSpeechActive &&
+                        SherpaSenseVoiceEngine.isMeaningfulSpeech(
+                            previewRes.text,
+                            previewRes.detectedLanguage,
+                            settings.asrLanguageMode
+                        )
+                    ) {
+                        _state.update { it.copy(partialTranscript = previewRes.text) }
+                    }
+                }
+            }
+
             // ASR + Glossary + Translation consumer coroutine
             asrWorkerJob = scope.launch(Dispatchers.Default) {
                 try {
-                    if (asrEngine != null) {
+                    if (loadedAsr != null) {
                         for (chunk in chunkChannel) {
-                            processSpeechChunk(
-                                sessionId = sessionId,
-                                chunk = chunk,
-                                asrEngine = asrEngine,
-                                settingsSnapshot = settingsRepo.settingsFlow.first(),
-                                activeTerms = database.glossaryDao().getActiveEntries().map { it.toDomain() }
-                            )
+                            isMainAsrBusy.set(true)
+                            try {
+                                processSpeechChunk(
+                                    sessionId = sessionId,
+                                    chunk = chunk,
+                                    asrEngine = loadedAsr,
+                                    settingsSnapshot = settingsRepo.settingsFlow.first(),
+                                    activeTerms = database.glossaryDao().getActiveEntries().map { it.toDomain() }
+                                )
+                            } finally {
+                                isMainAsrBusy.set(false)
+                            }
                         }
                     }
                 } finally {
-                    runCatching { asrEngine?.close() }
+                    isMainAsrBusy.set(false)
+                    withTimeoutOrNull(1_500L) {
+                        runCatching { partialPreviewJob?.join() }
+                    }
+                    runCatching { loadedAsr?.close() }
                 }
             }
 
             // Audio capture + WAV persistence + DSP + Silero VAD producer coroutine
             captureJob = scope.launch(Dispatchers.IO) {
-                // Keep a rolling buffer for optional live partial preview during long utterances
                 val partialBuffer = FloatArray(16000 * 6)
                 var partialCount = 0
-                var lastPartialDecodeMs = 0L
+                var lastPartialDispatchMs = 0L
                 var frameCounter = 0
 
                 try {
@@ -319,9 +362,9 @@ class RecordingCoordinator(
                             }
 
                             // 3. Feed Silero VAD
-                            if (vadEngine != null) {
-                                vadEngine.acceptSamples(enhanced)
-                                val speechNow = vadEngine.isSpeechDetected()
+                            if (loadedVad != null) {
+                                loadedVad.acceptSamples(enhanced)
+                                val speechNow = loadedVad.isSpeechDetected()
                                 if (speechNow != _state.value.isSpeechActive) {
                                     _state.update { it.copy(isSpeechActive = speechNow) }
                                 }
@@ -333,25 +376,17 @@ class RecordingCoordinator(
                                         partialCount += copyLen
                                     }
                                     val nowMs = System.currentTimeMillis()
-                                    if (partialCount >= 16000 * 2 && nowMs - lastPartialDecodeMs > 1800L && asrEngine != null) {
-                                        lastPartialDecodeMs = nowMs
-                                        val previewSlice = partialBuffer.copyOf(partialCount)
-                                        val previewRes = runCatching { asrEngine.transcribe(previewSlice, 16000) }.getOrNull()
-                                        if (previewRes != null && SherpaSenseVoiceEngine.isMeaningfulSpeech(
-                                                previewRes.text,
-                                                previewRes.detectedLanguage,
-                                                settings.asrLanguageMode
-                                            )
-                                        ) {
-                                            _state.update { it.copy(partialTranscript = previewRes.text) }
-                                        }
+                                    if (partialCount >= 16000 * 2 && nowMs - lastPartialDispatchMs > 1800L && loadedAsr != null) {
+                                        lastPartialDispatchMs = nowMs
+                                        // Non-blocking send to CONFLATED channel (zero stalls on audio thread)
+                                        previewChannel.trySend(partialBuffer.copyOf(partialCount))
                                     }
                                 } else {
                                     partialCount = 0
                                 }
 
                                 while (true) {
-                                    val seg = vadEngine.pollSegment() ?: break
+                                    val seg = loadedVad.pollSegment() ?: break
                                     partialCount = 0
                                     _state.update { it.copy(partialTranscript = "") }
                                     chunkChannel.trySend(seg)
@@ -359,14 +394,13 @@ class RecordingCoordinator(
                             }
                         }
                     )
-                    // Normal cooperative stop -> flush remaining speech tail
-                    if (vadEngine != null) {
-                        val remaining = runCatching { vadEngine.flush() }.getOrDefault(emptyList())
+                    if (loadedVad != null) {
+                        val remaining = runCatching { loadedVad.flush() }.getOrDefault(emptyList())
                         remaining.forEach { chunkChannel.trySend(it) }
                     }
                 } catch (ce: CancellationException) {
-                    if (vadEngine != null) {
-                        val remaining = runCatching { vadEngine.flush() }.getOrDefault(emptyList())
+                    if (loadedVad != null) {
+                        val remaining = runCatching { loadedVad.flush() }.getOrDefault(emptyList())
                         remaining.forEach { chunkChannel.trySend(it) }
                     }
                     throw ce
@@ -374,13 +408,15 @@ class RecordingCoordinator(
                     _state.update { it.copy(errorMessage = "录音异常: ${t.message}") }
                 } finally {
                     // CRITICAL: Must run in NonCancellable so cancelling captureJob never aborts
-                    // DB duration persistence or UI state reset!
+                    // DB duration persistence, error preservation, or UI state reset!
                     withContext(NonCancellable) {
+                        previewChannel.close()
+                        partialPreviewJob?.cancel()
                         chunkChannel.close()
                         val finalDuration = wavWriter.durationMs()
                         runCatching { wavWriter.close() }
-                        runCatching { vadEngine?.close() }
-                        runCatching { gtcrnEnhancer?.close() }
+                        runCatching { loadedVad?.close() }
+                        runCatching { loadedGtcrn?.close() }
                         dspPipeline = null
 
                         // Wait briefly for remaining queued ASR segments to finish writing to DB
@@ -396,45 +432,60 @@ class RecordingCoordinator(
                         }
                         timerJob?.cancel()
                         timerJob = null
+                        partialPreviewJob = null
                         isPausedFlag.set(false)
                         isStoppingFlag.set(false)
-                        _state.value = RecordingUiState()
+                        val preservedError = _state.value.errorMessage
+                        _state.value = RecordingUiState(errorMessage = preservedError)
                     }
                 }
             }
 
             sessionId
         }.onFailure { err ->
+            // Clean up any native models loaded before init cancellation or failure
+            runCatching { asrEngine?.close() }
+            runCatching { vadEngine?.close() }
+            runCatching { gtcrnEnhancer?.close() }
             isStoppingFlag.set(false)
-            _state.value = RecordingUiState(errorMessage = err.message ?: "启动录音失败")
+            if (err is CancellationException) {
+                _state.value = RecordingUiState()
+            } else {
+                _state.value = RecordingUiState(errorMessage = err.message ?: "启动录音失败")
+            }
         }
     }
 
     suspend fun stopSession() {
+        // Set stop flag immediately BEFORE acquiring mutex so any in-progress startSession() aborts cleanly
         isStoppingFlag.set(true)
-        timerJob?.cancel()
-        timerJob = null
-        val job = captureJob
-        captureJob = null
-        try {
-            if (job != null) {
-                // Give cooperative stop up to 2.5s to exit AudioRecord.read & flush cleanly
-                val finishedCleanly = withTimeoutOrNull(2_500L) {
-                    job.join()
-                    true
-                } ?: false
-                if (!finishedCleanly) {
-                    job.cancel()
-                    withTimeoutOrNull(3_000L) {
-                        runCatching { job.join() }
+        lifecycleMutex.withLock {
+            timerJob?.cancel()
+            timerJob = null
+            val job = captureJob
+            captureJob = null
+            try {
+                if (job != null) {
+                    val finishedCleanly = withTimeoutOrNull(2_500L) {
+                        job.join()
+                        true
+                    } ?: false
+                    if (!finishedCleanly) {
+                        job.cancel()
+                        withTimeoutOrNull(3_000L) {
+                            runCatching { job.join() }
+                        }
                     }
                 }
+            } finally {
+                partialPreviewJob?.cancel()
+                partialPreviewJob = null
+                asrWorkerJob = null
+                isPausedFlag.set(false)
+                isStoppingFlag.set(false)
+                val preservedError = _state.value.errorMessage
+                _state.value = RecordingUiState(errorMessage = preservedError)
             }
-        } finally {
-            asrWorkerJob = null
-            isPausedFlag.set(false)
-            isStoppingFlag.set(false)
-            _state.value = RecordingUiState()
         }
     }
 

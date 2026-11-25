@@ -236,39 +236,39 @@ object BuiltInGlossaries {
             GlossaryTerm(
                 canonicalTerm = "RNA interference",
                 translation = "RNA干扰",
-                aliases = listOf("RNAi", "siRNA", "RNA干绕"),
-                notes = "双链 RNA 诱导的序列特异性基因沉默机制"
+                aliases = listOf("RNA干绕"),
+                notes = "双链 RNA 诱导的序列特异性基因沉默机制（包括 siRNA / shRNA）"
             ),
 
             // Molecular Biology Techniques & Biotechnology
             GlossaryTerm(
                 canonicalTerm = "CRISPR-Cas9",
                 translation = "CRISPR基因编辑系统",
-                aliases = listOf("CRISPR", "Cas9", "克里斯珀", "基因编集"),
+                aliases = listOf("克里斯珀", "基因编集"),
                 notes = "sgRNA 引导 Cas9 核酸内切酶识别 PAM 序列并精准切割靶向 DNA"
             ),
             GlossaryTerm(
                 canonicalTerm = "PCR",
                 translation = "聚合酶链式反应",
-                aliases = listOf("聚合没链式反应", "qPCR", "RT-PCR"),
-                notes = "经变性-退火-延伸循环在体外指数级扩增特定 DNA 片段"
+                aliases = listOf("聚合没链式反应"),
+                notes = "经变性-退火-延伸循环在体外指数级扩增特定 DNA 片段（衍生技术含 qPCR / RT-PCR）"
             ),
             GlossaryTerm(
                 canonicalTerm = "Electrophoresis",
                 translation = "电泳",
-                aliases = listOf("电永", "电咏", "琼脂糖凝胶电泳", "SDS-PAGE"),
-                notes = "利用电场按分子大小和电荷分离核酸或蛋白质的技术"
+                aliases = listOf("电永", "电咏"),
+                notes = "利用电场按分子大小和电荷分离核酸或蛋白质的技术（如琼脂糖凝胶电泳 / SDS-PAGE）"
             ),
             GlossaryTerm(
                 canonicalTerm = "Western blot",
                 translation = "蛋白质免疫印迹",
-                aliases = listOf("蛋白印迹", "免疫印迹", "免疫印记", "western"),
+                aliases = listOf("免疫印记"),
                 notes = "经电泳转膜与一抗/二抗孵育检测特定目标蛋白表达量"
             ),
             GlossaryTerm(
                 canonicalTerm = "Plasmid",
                 translation = "质粒",
-                aliases = listOf("质立", "质利", "质粒载体"),
+                aliases = listOf("质立", "质利"),
                 notes = "细菌染色体外可自主复制的环状双链 DNA，常用作分子克隆载体"
             ),
             GlossaryTerm(
@@ -280,8 +280,8 @@ object BuiltInGlossaries {
             GlossaryTerm(
                 canonicalTerm = "Homologous recombination",
                 translation = "同源重组",
-                aliases = listOf("同原重组", "同源重祖", "HDR"),
-                notes = "依赖同源模板精确修复 DNA 双链断裂或实现定向基因敲入"
+                aliases = listOf("同原重组", "同源重祖"),
+                notes = "依赖同源模板精确修复 DNA 双链断裂或实现定向基因敲入（HDR）"
             ),
             GlossaryTerm(
                 canonicalTerm = "Apoptosis",

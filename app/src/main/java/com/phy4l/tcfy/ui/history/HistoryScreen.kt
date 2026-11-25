@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Badge
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -38,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.phy4l.tcfy.data.db.LectureSessionEntity
 import com.phy4l.tcfy.data.export.SessionExporter
@@ -53,6 +55,7 @@ fun HistoryScreen(
 ) {
     val sessions by viewModel.sessions.collectAsState()
     val query by viewModel.searchQuery.collectAsState()
+    val recState by viewModel.recordingState.collectAsState()
     var sessionToDelete by remember { mutableStateOf<LectureSessionEntity?>(null) }
 
     Column(
@@ -110,8 +113,10 @@ fun HistoryScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(sessions, key = { it.id }) { session ->
+                    val isActivelyRecording = session.isRecording || session.id == recState.activeSessionId
                     SessionListCard(
                         session = session,
+                        isActivelyRecording = isActivelyRecording,
                         onClick = { onOpenSession(session.id) },
                         onDeleteClick = { sessionToDelete = session }
                     )
@@ -141,6 +146,7 @@ fun HistoryScreen(
 @Composable
 private fun SessionListCard(
     session: LectureSessionEntity,
+    isActivelyRecording: Boolean,
     onClick: () -> Unit,
     onDeleteClick: () -> Unit
 ) {
@@ -162,14 +168,35 @@ private fun SessionListCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = session.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = session.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (isActivelyRecording) {
+                        Badge(containerColor = MaterialTheme.colorScheme.errorContainer) {
+                            Text(
+                                text = "录制中",
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "$dateStr · 时长 ${SessionExporter.formatTimestamp(session.durationMs)}",
+                    text = if (isActivelyRecording) {
+                        "$dateStr · 正在录制..."
+                    } else {
+                        "$dateStr · 时长 ${SessionExporter.formatTimestamp(session.durationMs)}"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -177,7 +204,9 @@ private fun SessionListCard(
                     Text(
                         text = "术语库：${session.glossarySnapshotName}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 if (session.aiSummaryMarkdown.isNotBlank()) {
@@ -192,11 +221,18 @@ private fun SessionListCard(
                 }
             }
             Spacer(modifier = Modifier.width(6.dp))
-            IconButton(onClick = onDeleteClick) {
+            IconButton(
+                onClick = onDeleteClick,
+                enabled = !isActivelyRecording
+            ) {
                 Icon(
                     imageVector = Icons.Default.DeleteOutline,
                     contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = if (isActivelyRecording) {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
                 )
             }
         }

@@ -13,9 +13,10 @@ captures/
 app/libs/*.aar
 app/libs/*.jar
 
-# Keystores & secrets
+# Release keystores & secrets (keep shared app/debug.keystore for seamless CI debug upgrades)
 *.jks
 *.keystore
+!app/debug.keystore
 
 # OS
 .DS_Store

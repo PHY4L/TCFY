@@ -47,13 +47,18 @@ class RecordingForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
+                val cur = coordinator.state.value
+                if (cur.isRecording || cur.isInitializing) {
+                    // Ignore duplicate rapid taps so we never kill an active recording's WakeLock/notification
+                    return START_NOT_STICKY
+                }
                 val title = intent.getStringExtra(EXTRA_TITLE)
                 acquireWakeLock()
                 startForegroundCompat(buildNotification("正在初始化教室远场录音...", isPaused = false))
                 observeRecordingStateForNotification()
                 serviceScope.launch {
                     val result = coordinator.startSession(title)
-                    if (result.isFailure) {
+                    if (result.isFailure && !coordinator.state.value.isRecording) {
                         releaseWakeLock()
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         stopSelf()
@@ -86,19 +91,26 @@ class RecordingForegroundService : Service() {
         stateObserverJob?.cancel()
         stateObserverJob = serviceScope.launch {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            var sawActiveRecording = false
             coordinator.state.collectLatest { st ->
                 if (st.isRecording) {
+                    sawActiveRecording = true
                     val timeText = SessionExporter.formatTimestamp(st.elapsedMs)
                     val prefix = if (st.isPaused) "已暂停" else "录音转写中"
                     val detail = "$prefix · $timeText · ${st.asrModeLabel}"
                     nm.notify(NOTIFICATION_ID, buildNotification(detail, st.isPaused))
+                } else if (sawActiveRecording && !st.isInitializing) {
+                    // Recording ended unexpectedly (e.g. mic preempted by phone call) -> release WakeLock & stop service
+                    releaseWakeLock()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
                 }
             }
         }
     }
 
     private fun startForegroundCompat(notification: Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             startForeground(
                 NOTIFICATION_ID,
                 notification,

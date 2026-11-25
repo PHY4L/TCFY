@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -40,10 +42,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.phy4l.tcfy.data.db.GlossaryEntryEntity
 import com.phy4l.tcfy.data.db.GlossaryPackEntity
@@ -52,7 +56,7 @@ import com.phy4l.tcfy.ui.TcfyViewModel
 @Composable
 fun GlossaryScreen(viewModel: TcfyViewModel) {
     val packs by viewModel.glossaryPacks.collectAsState()
-    var selectedPack by remember { mutableStateOf<GlossaryPackEntity?>(null) }
+    var selectedPackId by rememberSaveable { mutableStateOf<Long?>(null) }
     var showCreatePackDialog by remember { mutableStateOf(false) }
 
     val importPicker = rememberLauncherForActivityResult(
@@ -63,15 +67,15 @@ fun GlossaryScreen(viewModel: TcfyViewModel) {
         }
     }
 
-    val currentPack = selectedPack
+    val currentPack = selectedPackId?.let { id -> packs.firstOrNull { it.id == id } }
     if (currentPack != null) {
         BackHandler {
-            selectedPack = null
+            selectedPackId = null
         }
         PackTermsDetailView(
             pack = currentPack,
             viewModel = viewModel,
-            onBack = { selectedPack = null }
+            onBack = { selectedPackId = null }
         )
         return
     }
@@ -96,19 +100,21 @@ fun GlossaryScreen(viewModel: TcfyViewModel) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Button(
                 onClick = { showCreatePackDialog = true },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                 modifier = Modifier.weight(1f)
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("新建课程词库")
+                Text("新建词库", maxLines = 1, softWrap = false)
             }
             OutlinedButton(
                 onClick = { importPicker.launch(arrayOf("*/*")) },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                 modifier = Modifier.weight(1f)
             ) {
                 Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("导入 CSV/TXT/JSON")
+                Text("导入词库", maxLines = 1, softWrap = false)
             }
         }
 
@@ -122,7 +128,7 @@ fun GlossaryScreen(viewModel: TcfyViewModel) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { selectedPack = pack },
+                        .clickable { selectedPackId = pack.id },
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                 ) {
@@ -136,14 +142,18 @@ fun GlossaryScreen(viewModel: TcfyViewModel) {
                             Text(
                                 text = pack.name,
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             if (pack.description.isNotBlank()) {
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = pack.description,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
@@ -173,11 +183,14 @@ fun GlossaryScreen(viewModel: TcfyViewModel) {
             onDismissRequest = { showCreatePackDialog = false },
             title = { Text("新建课程术语库") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        label = { Text("课程名称（如 固体物理 / 电磁学）") },
+                        label = { Text("课程名称（如 分子生物学 / 遗传学）") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -185,15 +198,19 @@ fun GlossaryScreen(viewModel: TcfyViewModel) {
                         value = desc,
                         onValueChange = { desc = it },
                         label = { Text("简介（可选）") },
+                        maxLines = 3,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    viewModel.createGlossaryPack(name, desc)
-                    showCreatePackDialog = false
-                }) { Text("创建") }
+                Button(
+                    onClick = {
+                        viewModel.createGlossaryPack(name, desc)
+                        showCreatePackDialog = false
+                    },
+                    enabled = name.isNotBlank()
+                ) { Text("创建") }
             },
             dismissButton = {
                 TextButton(onClick = { showCreatePackDialog = false }) { Text("取消") }
@@ -226,8 +243,18 @@ private fun PackTermsDetailView(
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text(pack.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("共 ${entries.size} 条术语", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    pack.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "共 ${entries.size} 条术语",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             IconButton(onClick = { viewModel.exportGlossaryPack(pack, "csv") }) {
                 Icon(Icons.Default.Share, contentDescription = "导出 CSV")
@@ -313,7 +340,10 @@ private fun PackTermsDetailView(
             },
             title = { Text(if (editingEntry == null) "添加专业术语" else "编辑术语") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     OutlinedTextField(
                         value = term,
                         onValueChange = { term = it },
@@ -332,29 +362,34 @@ private fun PackTermsDetailView(
                         value = aliases,
                         onValueChange = { aliases = it },
                         label = { Text("易错词/同音词（逗号分隔）") },
+                        maxLines = 3,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = notes,
                         onValueChange = { notes = it },
                         label = { Text("简短说明（供 AI 理解上下文）") },
+                        maxLines = 3,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    viewModel.addOrUpdateGlossaryTerm(
-                        packId = pack.id,
-                        existingId = editingEntry?.id ?: 0L,
-                        canonicalTerm = term,
-                        translation = trans,
-                        aliasesText = aliases,
-                        notes = notes
-                    )
-                    showAddDialog = false
-                    editingEntry = null
-                }) { Text("保存") }
+                Button(
+                    onClick = {
+                        viewModel.addOrUpdateGlossaryTerm(
+                            packId = pack.id,
+                            existingId = editingEntry?.id ?: 0L,
+                            canonicalTerm = term,
+                            translation = trans,
+                            aliasesText = aliases,
+                            notes = notes
+                        )
+                        showAddDialog = false
+                        editingEntry = null
+                    },
+                    enabled = term.isNotBlank()
+                ) { Text("保存") }
             },
             dismissButton = {
                 TextButton(onClick = {

@@ -18,7 +18,8 @@ class OfflineTermCorrector(
     private data class AliasRule(
         val alias: String,
         val isLatinWord: Boolean,
-        val term: GlossaryTerm
+        val term: GlossaryTerm,
+        val isCanonicalLock: Boolean = false
     )
 
     private val aliasRules: List<AliasRule>
@@ -34,14 +35,26 @@ class OfflineTermCorrector(
             val canonical = t.canonicalTerm.trim()
             if (canonical.isEmpty()) continue
 
+            // Lock canonical term intact so sub-aliases (e.g. "CRISPR" / "Cas9" inside "CRISPR-Cas9")
+            // never split or double-expand an already-correct canonical term.
+            rules.add(
+                AliasRule(
+                    alias = canonical,
+                    isLatinWord = canonical.all { it.isLetterOrDigit() || it == '-' || it == '_' || it == ' ' },
+                    term = t,
+                    isCanonicalLock = true
+                )
+            )
+
             for (rawAlias in t.aliases) {
                 val alias = rawAlias.trim()
-                if (alias.isNotEmpty() && !alias.equals(canonical, ignoreCase = false)) {
+                if (alias.isNotEmpty() && !alias.equals(canonical, ignoreCase = true)) {
                     rules.add(
                         AliasRule(
                             alias = alias,
                             isLatinWord = alias.all { it.isLetterOrDigit() || it == '-' || it == '_' || it == ' ' },
-                            term = t
+                            term = t,
+                            isCanonicalLock = false
                         )
                     )
                 }
@@ -64,8 +77,11 @@ class OfflineTermCorrector(
             }
         }
 
-        // Longest-match-first prevents shorter aliases from partially clobbering longer ones
-        aliasRules = rules.sortedByDescending { it.alias.length }
+        // Longest-match-first, with canonical locks taking precedence on equal length
+        aliasRules = rules.sortedWith(
+            compareByDescending<AliasRule> { it.alias.length }
+                .thenByDescending { it.isCanonicalLock }
+        )
         cjkTerms = cjkCandidates.distinctBy { it.first }.sortedByDescending { it.first.length }
         latinTerms = latinCandidates.distinctBy { it.first }.sortedByDescending { it.first.length }
     }
@@ -132,16 +148,18 @@ class OfflineTermCorrector(
                 val startOut = result.length
                 val replacement = matched.term.canonicalTerm
                 result.append(replacement)
-                spans.add(
-                    TermCorrectionSpan(
-                        startIndex = startOut,
-                        endIndex = result.length,
-                        originalText = orig,
-                        correctedText = replacement,
-                        translation = matched.term.translation,
-                        matchReason = "alias"
+                if (!matched.isCanonicalLock || orig != replacement) {
+                    spans.add(
+                        TermCorrectionSpan(
+                            startIndex = startOut,
+                            endIndex = result.length,
+                            originalText = orig,
+                            correctedText = replacement,
+                            translation = matched.term.translation,
+                            matchReason = "alias"
+                        )
                     )
-                )
+                }
                 i += matched.alias.length
             } else {
                 result.append(text[i])
@@ -320,5 +338,5 @@ class OfflineTermCorrector(
     }
 
     private fun isLatinWordChar(ch: Char): Boolean =
-        ch in 'a'..'z' || ch in 'A'..'Z' || ch in '0'..'9'
+        ch in 'a'..'z' || ch in 'A'..'Z' || ch in '0'..'9' || ch == '-'
 }

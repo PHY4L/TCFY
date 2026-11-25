@@ -15,12 +15,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
@@ -69,7 +72,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phy4l.tcfy.audio.AcousticPreset
@@ -100,9 +103,14 @@ fun RecordScreen(
     var showDirectionMenu by remember { mutableStateOf(false) }
     var inspectedSegment by remember { mutableStateOf<TranscriptSegmentEntity?>(null) }
 
+    // Smart auto-scroll: only jump to bottom when user is already near the latest items
     LaunchedEffect(segments.size) {
         if (segments.isNotEmpty()) {
-            listState.animateScrollToItem(segments.lastIndex)
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val nearBottom = segments.size <= 2 || lastVisible >= segments.lastIndex - 3
+            if (nearBottom) {
+                listState.animateScrollToItem(segments.lastIndex)
+            }
         }
     }
 
@@ -122,7 +130,8 @@ fun RecordScreen(
                     text = "教室远场听译",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 val activePackCount = packs.count { it.isActive }
                 Text(
@@ -133,7 +142,8 @@ fun RecordScreen(
                     },
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
@@ -141,7 +151,7 @@ fun RecordScreen(
                 Box {
                     AssistChip(
                         onClick = { showDirectionMenu = true },
-                        label = { Text(settings.translationDirection.shortLabel, fontSize = 12.sp) },
+                        label = { Text(settings.translationDirection.shortLabel, fontSize = 12.sp, maxLines = 1) },
                         leadingIcon = {
                             Icon(Icons.Default.Translate, contentDescription = null, modifier = Modifier.size(16.dp))
                         }
@@ -189,8 +199,12 @@ fun RecordScreen(
             }
         }
 
-        // Model missing banner (guides user to download SenseVoice & Silero VAD)
-        if (!coreReady) {
+        // Model missing or runtime warning banner
+        val warningText = recState.warningMessage ?: if (!coreReady) {
+            "尚未下载离线语音模型，当前仅保留原始远场录音。"
+        } else null
+
+        if (warningText != null) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
                 modifier = Modifier
@@ -201,21 +215,34 @@ fun RecordScreen(
                     modifier = Modifier.padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Warning, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                        modifier = Modifier.size(20.dp)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "尚未下载离线语音模型，当前仅保留原始远场录音。",
+                        text = warningText,
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
                         modifier = Modifier.weight(1f)
                     )
-                    TextButton(onClick = onNavigateToModels) {
-                        Text("去下载")
+                    if (!coreReady) {
+                        TextButton(
+                            onClick = onNavigateToModels,
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        ) {
+                            Text("去下载")
+                        }
                     }
                 }
             }
         }
 
-        // Warning / Error banner
+        // Error banner with accessible contrast in both light & dark themes
         recState.errorMessage?.let { err ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
@@ -233,7 +260,12 @@ fun RecordScreen(
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         modifier = Modifier.weight(1f)
                     )
-                    TextButton(onClick = { viewModel.clearRecordingError() }) { Text("关闭") }
+                    TextButton(
+                        onClick = { viewModel.clearRecordingError() },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    ) { Text("关闭") }
                 }
             }
         }
@@ -253,7 +285,10 @@ fun RecordScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f).padding(end = 8.dp)
+                        ) {
                             val dotColor by animateColorAsState(
                                 targetValue = when {
                                     recState.isPaused -> Color.Gray
@@ -272,13 +307,16 @@ fun RecordScreen(
                             Text(
                                 text = recState.activeAudioSourceLabel.ifBlank { "远场麦克风" },
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                         Text(
                             text = "AGC +${recState.currentAgcGainDb.roundToInt()}dB · ${recState.outputDbfs.roundToInt()} dBFS",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
                         )
                     }
                     Spacer(modifier = Modifier.height(4.dp))
@@ -364,7 +402,7 @@ fun RecordScreen(
             }
         }
 
-        // Bottom Control Deck
+        // Bottom Control Deck (tuned for 392dp width + MIUI large system fonts)
         Surface(
             tonalElevation = 3.dp,
             shape = RoundedCornerShape(20.dp),
@@ -375,49 +413,55 @@ fun RecordScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Elapsed Time
-                Column(modifier = Modifier.width(86.dp)) {
+                Column(modifier = Modifier.widthIn(min = 72.dp, max = 92.dp)) {
                     Text(
                         text = SessionExporter.formatTimestamp(recState.elapsedMs),
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                     Text(
                         text = when {
-                            recState.isInitializing -> "加载模型..."
+                            recState.isInitializing -> "加载中..."
                             recState.isPaused -> "已暂停"
-                            recState.isRecording -> "离线保护中"
+                            recState.isRecording -> "离线保护"
                             else -> "就绪"
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                // Primary Record / Pause / Stop Buttons
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (!recState.isRecording) {
                         Button(
                             onClick = onRequestMicPermissionAndStart,
                             enabled = !recState.isInitializing,
-                            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                             shape = RoundedCornerShape(28.dp)
                         ) {
-                            Icon(Icons.Default.Mic, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(if (recState.isInitializing) "初始化中..." else "开始听课", fontWeight = FontWeight.SemiBold)
+                            Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (recState.isInitializing) "初始化..." else "开始听课",
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
                         }
                     } else {
                         FilledTonalIconButton(
                             onClick = { viewModel.togglePauseRecording() },
-                            modifier = Modifier.size(50.dp)
+                            modifier = Modifier.size(48.dp)
                         ) {
                             Icon(
                                 imageVector = if (recState.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
@@ -431,22 +475,21 @@ fun RecordScreen(
                                 containerColor = MaterialTheme.colorScheme.error,
                                 contentColor = MaterialTheme.colorScheme.onError
                             ),
-                            modifier = Modifier.size(56.dp)
+                            modifier = Modifier.size(54.dp)
                         ) {
                             Icon(Icons.Default.Stop, contentDescription = "停止保存")
                         }
                     }
                 }
 
-                // Quick Bookmark Button
                 OutlinedButton(
                     onClick = { viewModel.bookmarkCurrent() },
                     enabled = recState.isRecording,
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
                 ) {
-                    Icon(Icons.Default.BookmarkBorder, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("重点", fontSize = 12.sp)
+                    Icon(Icons.Default.BookmarkBorder, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("重点", fontSize = 12.sp, maxLines = 1, softWrap = false)
                 }
             }
         }
@@ -457,12 +500,13 @@ fun RecordScreen(
         SegmentQuickFixDialog(
             segment = seg,
             onDismiss = { inspectedSegment = null },
-            onSaveManualEdit = { newText ->
-                viewModel.updateSegmentManualText(seg.id, newText)
-                inspectedSegment = null
-            },
-            onAddTerm = { term, trans, alias ->
-                viewModel.quickAddTermToActiveGlossary(term, trans, alias)
+            onSaveAll = { newText, term, trans, alias ->
+                if (newText.isNotBlank() && newText.trim() != seg.displaySourceText) {
+                    viewModel.updateSegmentManualText(seg.id, newText)
+                }
+                if (term.isNotBlank()) {
+                    viewModel.quickAddTermToActiveGlossary(term, trans, alias)
+                }
                 inspectedSegment = null
             }
         )
@@ -572,8 +616,7 @@ private fun LiveSegmentCard(
 fun SegmentQuickFixDialog(
     segment: TranscriptSegmentEntity,
     onDismiss: () -> Unit,
-    onSaveManualEdit: (String) -> Unit,
-    onAddTerm: (canonical: String, translation: String, alias: String) -> Unit
+    onSaveAll: (editedText: String, canonical: String, translation: String, alias: String) -> Unit
 ) {
     var editedText by remember { mutableStateOf(segment.displaySourceText) }
     var termCanonical by remember { mutableStateOf("") }
@@ -584,7 +627,10 @@ fun SegmentQuickFixDialog(
         onDismissRequest = onDismiss,
         title = { Text("编辑段落 / 快捷加入术语库") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 if (segment.rawText != segment.correctedText) {
                     Text(
                         text = "离线原始识别：${segment.rawText}",
@@ -596,43 +642,40 @@ fun SegmentQuickFixDialog(
                     value = editedText,
                     onValueChange = { editedText = it },
                     label = { Text("修改当前段文字") },
+                    maxLines = 4,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                Text("将错词一键加入当前启用术语库（可选）", style = MaterialTheme.typography.labelMedium)
+                Text("将错词同步加入当前启用术语库（可选）", style = MaterialTheme.typography.labelMedium)
                 OutlinedTextField(
                     value = termCanonical,
                     onValueChange = { termCanonical = it },
-                    label = { Text("标准术语（如 Hamiltonian）") },
+                    label = { Text("标准术语（如 Telomerase）") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = termTranslation,
                     onValueChange = { termTranslation = it },
-                    label = { Text("译名（如 哈密顿量）") },
+                    label = { Text("译名（如 端粒酶）") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = termAlias,
                     onValueChange = { termAlias = it },
-                    label = { Text("误转易错词（如 哈密顿良）") },
+                    label = { Text("误转易错词（如 端粒没）") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
         },
         confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (termCanonical.isNotBlank()) {
-                    Button(onClick = { onAddTerm(termCanonical, termTranslation, termAlias) }) {
-                        Text("加术语")
-                    }
-                }
-                Button(onClick = { onSaveManualEdit(editedText) }) {
-                    Text("保存文字")
-                }
+            Button(
+                onClick = { onSaveAll(editedText, termCanonical, termTranslation, termAlias) },
+                enabled = editedText.isNotBlank() || termCanonical.isNotBlank()
+            ) {
+                Text(if (termCanonical.isNotBlank()) "保存并加入术语库" else "保存文字")
             }
         },
         dismissButton = {

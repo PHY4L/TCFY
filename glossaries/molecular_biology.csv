@@ -35,14 +35,14 @@ Epigenetics,表观遗传学,表观遗传; 表关遗传; 标观遗传; epigenetic
 DNA methylation,DNA甲基化,假基化; 甲基画; 甲机化; methylation,常发生于 CpG 岛胞嘧啶 5 位碳的甲基化修饰
 Histone acetylation,组蛋白乙酰化,乙酰化; 以酰化; 乙先化; acetylation,中和组蛋白正电荷使染色质疏松并激活转录
 microRNA,微小RNA,miRNA; 米RNA; 微RNA,约 22 nt 非编码小 RNA 介导靶 mRNA 调控
-RNA interference,RNA干扰,RNAi; siRNA; RNA干绕,双链 RNA 诱导的序列特异性基因沉默机制
-CRISPR-Cas9,CRISPR基因编辑系统,CRISPR; Cas9; 克里斯珀; 基因编集,sgRNA 引导 Cas9 精准切割靶向 DNA 的编辑系统
-PCR,聚合酶链式反应,聚合没链式反应; qPCR; RT-PCR,体外指数级扩增特定 DNA 片段的技术
-Electrophoresis,电泳,电永; 电咏; 琼脂糖凝胶电泳; SDS-PAGE,利用电场按大小与电荷分离核酸或蛋白质的技术
-Western blot,蛋白质免疫印迹,蛋白印迹; 免疫印迹; 免疫印记; western,经电泳转膜与抗体孵育检测目标蛋白表达量
-Plasmid,质粒,质立; 质利; 质粒载体,细菌染色体外可自主复制的环状双链 DNA 载体
+RNA interference,RNA干扰,RNA干绕,双链 RNA 诱导的序列特异性基因沉默机制（包括 siRNA / shRNA）
+CRISPR-Cas9,CRISPR基因编辑系统,克里斯珀; 基因编集,sgRNA 引导 Cas9 精准切割靶向 DNA 的编辑系统
+PCR,聚合酶链式反应,聚合没链式反应,体外指数级扩增特定 DNA 片段的技术（衍生技术含 qPCR / RT-PCR）
+Electrophoresis,电泳,电永; 电咏,利用电场按大小与电荷分离核酸或蛋白质的技术（如琼脂糖凝胶电泳 / SDS-PAGE）
+Western blot,蛋白质免疫印迹,免疫印记,经电泳转膜与抗体孵育检测目标蛋白表达量
+Plasmid,质粒,质立; 质利,细菌染色体外可自主复制的环状双链 DNA 载体
 Restriction enzyme,限制性内切酶,限制性内切没; 内切没; 限制没,识别特定回文序列并切割 DNA 的工具酶
-Homologous recombination,同源重组,同原重组; 同源重祖; HDR,依赖同源模板精确修复 DNA 双链断裂的机制
+Homologous recombination,同源重组,同原重组; 同源重祖,依赖同源模板精确修复 DNA 双链断裂的机制（HDR）
 Apoptosis,细胞凋亡,雕亡; 细胞雕亡; apoptosis,由 Caspase 级联介导的程序性细胞死亡
 Autophagy,细胞自噬,自试; 细胞自试; autophagy,溶酶体介导降解受损细胞器与蛋白的稳态机制
 Allosteric regulation,别构调节,别构条节; 变构调节,效应分子结合非活性位点引起构象变化的调节方式
