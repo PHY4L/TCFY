@@ -1,0 +1,22 @@
+# Gradle & Android Studio
+.gradle/
+.idea/
+local.properties
+*.iml
+build/
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Large binary dependencies fetched via scripts/fetch_deps.sh
+app/libs/*.aar
+app/libs/*.jar
+
+# Keystores & secrets
+*.jks
+*.keystore
+
+# OS
+.DS_Store
+Thumbs.db

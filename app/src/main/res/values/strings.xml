@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">TCFY 课堂听译</string>
+    <string name="notification_channel_name">课堂远场录音与转写</string>
+    <string name="notification_channel_desc">保持息屏及后台听课录音与离线转写不中断</string>
+</resources>
