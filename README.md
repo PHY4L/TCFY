@@ -52,3 +52,11 @@
 1. 首次安装后在「模型设置」页下载 **SenseVoice-Small**、**Silero VAD** 与 **GTCRN** 三个离线模型（共约 230MB）。
 2. 在「模型设置」底部点击**一键前往设置省电白名单**，将应用省电策略设为「无限制」，确保 45–90 分钟息屏听课不被杀后台。
 3. 听课时将手机平放课桌，**顶部麦克风朝向讲台方向**；后排无扩音器选「教室远场 (3-10m)」，有扩音器选「大教室有扩音器」。
+
+## 开发规范与项目文档
+
+- **项目规范与 AI 协作总纲**：[AGENTS.md](AGENTS.md)
+- **系统架构与模块设计**：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- **架构决策与历史踩坑档案**：[docs/DECISIONS.md](docs/DECISIONS.md)
+- **版本更新日志**：[CHANGELOG.md](CHANGELOG.md)
+
