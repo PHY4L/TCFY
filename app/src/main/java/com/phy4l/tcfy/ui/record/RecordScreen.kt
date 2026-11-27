@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.ExpandLess
@@ -261,42 +262,77 @@ fun RecordScreen(
                 }
             )
 
-            if (showAcousticChips) {
-                TextButton(
-                    onClick = {
-                        val nextPinned = !settings.pinAcousticPresetBar
-                        viewModel.updatePinAcousticBar(nextPinned)
-                        if (!nextPinned) acousticBarExpanded = false
-                    },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = if (settings.pinAcousticPresetBar) "已常驻 · 点此改为选后收起" else "常驻显示",
-                        fontSize = 11.sp
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                if (recState.isRecording) {
+                    AssistChip(
+                        onClick = { viewModel.triggerLiveAutoTune() },
+                        leadingIcon = {
+                            Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(15.dp))
+                        },
+                        label = { Text("智能调参", fontSize = 11.sp, maxLines = 1) }
                     )
+                } else if (showAcousticChips) {
+                    TextButton(
+                        onClick = {
+                            val nextPinned = !settings.pinAcousticPresetBar
+                            viewModel.updatePinAcousticBar(nextPinned)
+                            if (!nextPinned) acousticBarExpanded = false
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = if (settings.pinAcousticPresetBar) "已常驻 · 改为选后收起" else "常驻显示",
+                            fontSize = 11.sp
+                        )
+                    }
                 }
             }
         }
 
         AnimatedVisibility(visible = showAcousticChips) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 2.dp)
-            ) {
-                items(AcousticPreset.entries) { preset ->
-                    val selected = settings.acousticPresetName == preset.name
-                    FilterChip(
-                        selected = selected,
-                        onClick = {
-                            viewModel.applyAcousticPreset(preset)
-                            if (!settings.pinAcousticPresetBar) {
-                                acousticBarExpanded = false
-                            }
-                        },
-                        label = { Text(preset.displayName, fontSize = 12.sp) }
-                    )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp)
+                ) {
+                    items(AcousticPreset.entries) { preset ->
+                        val selected = settings.acousticPresetName == preset.name
+                        FilterChip(
+                            selected = selected,
+                            onClick = {
+                                viewModel.applyAcousticPreset(preset)
+                                if (!settings.pinAcousticPresetBar) {
+                                    acousticBarExpanded = false
+                                }
+                            },
+                            label = { Text(preset.displayName, fontSize = 12.sp) }
+                        )
+                    }
+                }
+                if (recState.isRecording) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(
+                            onClick = {
+                                val nextPinned = !settings.pinAcousticPresetBar
+                                viewModel.updatePinAcousticBar(nextPinned)
+                                if (!nextPinned) acousticBarExpanded = false
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Text(
+                                text = if (settings.pinAcousticPresetBar) "已常驻 · 改为选后收起" else "常驻显示此栏",
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -429,6 +465,16 @@ fun RecordScreen(
                             .height(6.dp)
                             .clip(RoundedCornerShape(3.dp))
                     )
+                    recState.autoTuneSummary?.let { summary ->
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = summary,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }

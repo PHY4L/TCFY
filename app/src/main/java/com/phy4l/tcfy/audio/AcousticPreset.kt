@@ -57,6 +57,25 @@ enum class AcousticPreset(
     val shortHint: String,
     val config: FarFieldDspConfig
 ) {
+    AUTO(
+        displayName = "自动智能",
+        shortHint = "录音前几分钟自动分析音量/混响/语速并动态调参",
+        config = FarFieldDspConfig(
+            highPassCutoffHz = 85f,
+            enableHighPass = true,
+            enableAgc = true,
+            targetRmsDbfs = -18f,
+            maxGainDb = 32f,
+            agcSilenceFloorDbfs = -66f,
+            denoiseLevel = DenoiseLevel.LIGHT,
+            vadThreshold = 0.24f,
+            vadMinSilenceSec = 0.55f,
+            vadMaxSpeechSec = 13.0f,
+            audioSourceMode = AudioSourceMode.FAR_FIELD_AUTO,
+            paAntiResonance = false,
+            fastSpeechMode = false
+        )
+    ),
     CLASSROOM_FAR_FIELD(
         displayName = "教室远场 (3-10m)",
         shortHint = "高增益 + 动态噪声门 + 敏感 VAD",

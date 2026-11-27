@@ -136,6 +136,20 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
         postToast("已标记课堂重点")
     }
 
+    fun triggerLiveAutoTune() {
+        viewModelScope.launch {
+            val res = coordinator.triggerManualAutoTune()
+            res.fold(
+                onSuccess = { decision ->
+                    postToast("智能调参完成：${decision.summaryReason}")
+                },
+                onFailure = { err ->
+                    postToast(err.message ?: "暂时无法调参")
+                }
+            )
+        }
+    }
+
     fun clearRecordingError() {
         coordinator.clearError()
     }

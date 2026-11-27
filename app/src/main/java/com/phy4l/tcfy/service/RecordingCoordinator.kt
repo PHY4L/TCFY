@@ -10,12 +10,15 @@ import com.phy4l.tcfy.asr.SherpaSenseVoiceEngine
 import com.phy4l.tcfy.asr.SherpaSileroVadEngine
 import com.phy4l.tcfy.asr.VadSegmenter
 import com.phy4l.tcfy.asr.VadSpeechChunk
+import com.phy4l.tcfy.audio.AcousticPreset
 import com.phy4l.tcfy.audio.AudioChunkPreprocessor
+import com.phy4l.tcfy.audio.AutoTuningDecision
 import com.phy4l.tcfy.audio.ClassroomAudioCapturer
 import com.phy4l.tcfy.audio.CrashSafeWavWriter
 import com.phy4l.tcfy.audio.DenoiseLevel
 import com.phy4l.tcfy.audio.FarFieldDspConfig
 import com.phy4l.tcfy.audio.FarFieldDspPipeline
+import com.phy4l.tcfy.audio.LiveAcousticAutoTuner
 import com.phy4l.tcfy.audio.SpeechChunkOverlapBuffer
 import com.phy4l.tcfy.audio.SpeechEnhancer
 import com.phy4l.tcfy.data.db.LectureSessionEntity
@@ -53,6 +56,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Coordinates the full local-first classroom recording pipeline:
@@ -90,6 +94,8 @@ class RecordingCoordinator(
     private var partialPreviewJob: Job? = null
     private var timerJob: Job? = null
     private var dspPipeline: FarFieldDspPipeline? = null
+    private val liveAutoTuner = LiveAcousticAutoTuner()
+    private val pendingVadReloadConfig = AtomicReference<FarFieldDspConfig?>(null)
 
     private val recordingsDir: File = File(context.filesDir, "recordings").apply { mkdirs() }
 
@@ -134,6 +140,38 @@ class RecordingCoordinator(
 
     fun updateLiveDspConfig(newConfig: FarFieldDspConfig) {
         dspPipeline?.updateConfig(newConfig)
+        if (_state.value.isRecording) {
+            pendingVadReloadConfig.set(newConfig)
+        }
+    }
+
+    /**
+     * Evaluates recent minutes of live recording telemetry and immediately applies optimized
+     * DSP + VAD parameters. Can be triggered manually by the user at any time during recording.
+     */
+    suspend fun triggerManualAutoTune(): Result<AutoTuningDecision> {
+        if (!_state.value.isRecording) {
+            return Result.failure(IllegalStateException("请先开始录音后再执行智能调参"))
+        }
+        val currentSettings = settingsRepo.settingsFlow.first()
+        val decision = liveAutoTuner.evaluateAndTune(
+            currentConfig = currentSettings.dspConfig,
+            minFrames = 40 // >= 4s of audio telemetry
+        ) ?: return Result.failure(IllegalStateException("刚开录音频样本不足，请录制满 5 秒后再试"))
+
+        applyAutoTuneDecision(decision, prefix = "手动调参")
+        return Result.success(decision)
+    }
+
+    private suspend fun applyAutoTuneDecision(decision: AutoTuningDecision, prefix: String) {
+        dspPipeline?.updateConfig(decision.recommendedConfig)
+        if (decision.needsVadRebuild) {
+            pendingVadReloadConfig.set(decision.recommendedConfig)
+        }
+        settingsRepo.updateDspConfig(decision.recommendedConfig)
+        _state.update {
+            it.copy(autoTuneSummary = "$prefix · ${decision.scene.displayName}：${decision.summaryReason}")
+        }
     }
 
     fun requestBookmarkCurrentOrNext() {
@@ -171,6 +209,8 @@ class RecordingCoordinator(
         isMainAsrBusy.set(false)
         bookmarkNextFlag.set(false)
         segmentIndexCounter.set(0)
+        liveAutoTuner.reset()
+        pendingVadReloadConfig.set(null)
 
         var asrEngine: OfflineAsrEngine? = null
         var vadEngine: VadSegmenter? = null
@@ -273,12 +313,38 @@ class RecordingCoordinator(
                 warningMessage = warningMsg
             )
 
-            // Elapsed timer
+            // Elapsed timer + scheduled automatic acoustic calibration under AUTO preset
             timerJob = scope.launch {
+                val autoTuneCheckpointsMs = longArrayOf(30_000L, 90_000L, 180_000L)
+                var nextCheckpointIdx = 0
+                var lastAutoTuneMs = 0L
                 while (isActive) {
                     delay(500L)
                     if (!isPausedFlag.get()) {
-                        _state.update { it.copy(elapsedMs = wavWriter.durationMs()) }
+                        val elapsed = wavWriter.durationMs()
+                        _state.update { it.copy(elapsedMs = elapsed) }
+
+                        val shouldCheckAuto = when {
+                            nextCheckpointIdx < autoTuneCheckpointsMs.size ->
+                                elapsed >= autoTuneCheckpointsMs[nextCheckpointIdx]
+                            else -> elapsed - lastAutoTuneMs >= 180_000L
+                        }
+                        if (shouldCheckAuto) {
+                            val curSettings = runCatching { settingsRepo.settingsFlow.first() }.getOrNull()
+                            if (curSettings != null && curSettings.acousticPresetName == AcousticPreset.AUTO.name) {
+                                val decision = liveAutoTuner.evaluateAndTune(
+                                    currentConfig = curSettings.dspConfig,
+                                    minFrames = 200 // >= 20s telemetry
+                                )
+                                if (decision != null) {
+                                    runCatching { applyAutoTuneDecision(decision, prefix = "自动调参") }
+                                }
+                            }
+                            if (nextCheckpointIdx < autoTuneCheckpointsMs.size) {
+                                nextCheckpointIdx++
+                            }
+                            lastAutoTuneMs = elapsed
+                        }
                     }
                 }
             }
@@ -324,6 +390,11 @@ class RecordingCoordinator(
                                     settingsSnapshot = snapshot,
                                     activeTerms = database.glossaryDao().getActiveEntries().map { it.toDomain() }
                                 )
+                                liveAutoTuner.recordAsrChunk(
+                                    durationSec = chunk.samples.size / 16000f,
+                                    wasForcedSplit = stitched.wasForcedSplit,
+                                    acceptedText = accepted
+                                )
                                 if (accepted != null) {
                                     lastAcceptedText = accepted
                                 }
@@ -347,6 +418,7 @@ class RecordingCoordinator(
                 var partialCount = 0
                 var lastPartialDispatchMs = 0L
                 var frameCounter = 0
+                var activeVad: VadSegmenter? = loadedVad
 
                 try {
                     capturer.captureLoop(
@@ -360,9 +432,32 @@ class RecordingCoordinator(
                             // 2. Run software far-field DSP + optional GTCRN
                             val enhanced = pipeline.processPcm16(pcm, count)
 
+                            // 2.5 Safe hot-reload of Silero VAD when auto-tuner or user updates VAD thresholds
+                            val reloadCfg = pendingVadReloadConfig.getAndSet(null)
+                            if (reloadCfg != null && activeVad != null && modelManager.isInstalled(ModelCatalog.SILERO_VAD)) {
+                                val flushed = runCatching { activeVad?.flush().orEmpty() }.getOrDefault(emptyList())
+                                flushed.forEach { chunkChannel.trySend(it) }
+                                runCatching { activeVad?.close() }
+                                activeVad = runCatching {
+                                    SherpaSileroVadEngine(
+                                        sileroModelFile = modelManager.getPrimaryModelFile(ModelCatalog.SILERO_VAD),
+                                        threshold = reloadCfg.vadThreshold,
+                                        minSilenceDurationSec = reloadCfg.vadMinSilenceSec,
+                                        maxSpeechDurationSec = reloadCfg.vadMaxSpeechSec
+                                    )
+                                }.getOrNull()
+                                partialCount = 0
+                            }
+
                             frameCounter++
                             if (frameCounter % 5 == 0) {
                                 val srcLabel = capturer.activeSessionInfo?.activeSourceLabel.orEmpty()
+                                liveAutoTuner.recordFrame(
+                                    inputDbfs = pipeline.lastInputDbfs,
+                                    noiseFloorDbfs = pipeline.lastNoiseFloorDbfs,
+                                    clipRatio = pipeline.lastClipRatio,
+                                    isSpeech = _state.value.isSpeechActive
+                                )
                                 _state.update {
                                     it.copy(
                                         inputDbfs = pipeline.lastInputDbfs,
@@ -374,9 +469,10 @@ class RecordingCoordinator(
                             }
 
                             // 3. Feed Silero VAD
-                            if (loadedVad != null) {
-                                loadedVad.acceptSamples(enhanced)
-                                val speechNow = loadedVad.isSpeechDetected()
+                            val vad = activeVad
+                            if (vad != null) {
+                                vad.acceptSamples(enhanced)
+                                val speechNow = vad.isSpeechDetected()
                                 if (speechNow != _state.value.isSpeechActive) {
                                     _state.update { it.copy(isSpeechActive = speechNow) }
                                 }
@@ -398,7 +494,7 @@ class RecordingCoordinator(
                                 }
 
                                 while (true) {
-                                    val seg = loadedVad.pollSegment() ?: break
+                                    val seg = vad.pollSegment() ?: break
                                     partialCount = 0
                                     _state.update { it.copy(partialTranscript = "") }
                                     chunkChannel.trySend(seg)
@@ -406,13 +502,13 @@ class RecordingCoordinator(
                             }
                         }
                     )
-                    if (loadedVad != null) {
-                        val remaining = runCatching { loadedVad.flush() }.getOrDefault(emptyList())
+                    if (activeVad != null) {
+                        val remaining = runCatching { activeVad?.flush().orEmpty() }.getOrDefault(emptyList())
                         remaining.forEach { chunkChannel.trySend(it) }
                     }
                 } catch (ce: CancellationException) {
-                    if (loadedVad != null) {
-                        val remaining = runCatching { loadedVad.flush() }.getOrDefault(emptyList())
+                    if (activeVad != null) {
+                        val remaining = runCatching { activeVad?.flush().orEmpty() }.getOrDefault(emptyList())
                         remaining.forEach { chunkChannel.trySend(it) }
                     }
                     throw ce
@@ -427,9 +523,10 @@ class RecordingCoordinator(
                         chunkChannel.close()
                         val finalDuration = wavWriter.durationMs()
                         runCatching { wavWriter.close() }
-                        runCatching { loadedVad?.close() }
+                        runCatching { activeVad?.close() }
                         runCatching { loadedGtcrn?.close() }
                         dspPipeline = null
+                        pendingVadReloadConfig.set(null)
 
                         // Wait briefly for remaining queued ASR segments to finish writing to DB
                         withTimeoutOrNull(4_000L) {
