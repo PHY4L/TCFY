@@ -203,24 +203,77 @@ fun SettingsScreen(viewModel: TcfyViewModel) {
 
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                "远场最大增益上限 (AGC): +${settings.dspConfig.maxGainDb.roundToInt()} dB",
+                "远场最大增益上限 (AGC): +${settings.dspConfig.maxGainDb.roundToInt()} dB（轻声汇报可拉至 34-40 dB）",
                 style = MaterialTheme.typography.bodyMedium
             )
             Slider(
-                value = settings.dspConfig.maxGainDb,
+                value = settings.dspConfig.maxGainDb.coerceIn(6f, 40f),
                 onValueChange = { viewModel.updateDspConfig(settings.dspConfig.copy(maxGainDb = it)) },
-                valueRange = 6f..30f
+                valueRange = 6f..40f
             )
 
             Text(
-                "Silero VAD 人声检测灵敏度: ${"%.2f".format(settings.dspConfig.vadThreshold)}（越低越适合 8-10m 后排）",
+                "Silero VAD 人声检测灵敏度: ${"%.2f".format(settings.dspConfig.vadThreshold)}（越低越适合轻声/后排）",
                 style = MaterialTheme.typography.bodyMedium
             )
             Slider(
-                value = settings.dspConfig.vadThreshold,
+                value = settings.dspConfig.vadThreshold.coerceIn(0.12f, 0.60f),
                 onValueChange = { viewModel.updateDspConfig(settings.dspConfig.copy(vadThreshold = it)) },
-                valueRange = 0.20f..0.60f
+                valueRange = 0.12f..0.60f
             )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("扩音器抗箱体轰鸣与防爆音均衡", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "切低频轰鸣 + 补辅音清晰度 + 柔和动态压缩，减少大教室话筒失真",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = settings.dspConfig.paAntiResonance,
+                    onCheckedChange = {
+                        viewModel.updateDspConfig(
+                            settings.dspConfig.copy(
+                                paAntiResonance = it,
+                                highPassCutoffHz = if (it) 125f else 85f
+                            )
+                        )
+                    }
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("快语速 / 音粘连防截断优化", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "缩短静音切分并保留 450ms 重叠缓冲，减少快语速漏字与腰斩",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = settings.dspConfig.fastSpeechMode,
+                    onCheckedChange = {
+                        viewModel.updateDspConfig(
+                            settings.dspConfig.copy(
+                                fastSpeechMode = it,
+                                vadMinSilenceSec = if (it) 0.38f else 0.55f,
+                                vadMaxSpeechSec = if (it) 9.5f else 13.0f
+                            )
+                        )
+                    }
+                )
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),

@@ -10,11 +10,13 @@ import com.phy4l.tcfy.asr.SherpaSenseVoiceEngine
 import com.phy4l.tcfy.asr.SherpaSileroVadEngine
 import com.phy4l.tcfy.asr.VadSegmenter
 import com.phy4l.tcfy.asr.VadSpeechChunk
+import com.phy4l.tcfy.audio.AudioChunkPreprocessor
 import com.phy4l.tcfy.audio.ClassroomAudioCapturer
 import com.phy4l.tcfy.audio.CrashSafeWavWriter
 import com.phy4l.tcfy.audio.DenoiseLevel
 import com.phy4l.tcfy.audio.FarFieldDspConfig
 import com.phy4l.tcfy.audio.FarFieldDspPipeline
+import com.phy4l.tcfy.audio.SpeechChunkOverlapBuffer
 import com.phy4l.tcfy.audio.SpeechEnhancer
 import com.phy4l.tcfy.data.db.LectureSessionEntity
 import com.phy4l.tcfy.data.db.SegmentSyncStatus
@@ -286,7 +288,8 @@ class RecordingCoordinator(
                 if (loadedAsr == null) return@launch
                 for (previewSlice in previewChannel) {
                     if (isStoppingFlag.get() || isMainAsrBusy.get()) continue
-                    val previewRes = runCatching { loadedAsr.transcribe(previewSlice, 16000) }.getOrNull()
+                    val normalizedPreview = AudioChunkPreprocessor.prepareForAsr(previewSlice, 16000)
+                    val previewRes = runCatching { loadedAsr.transcribe(normalizedPreview, 16000) }.getOrNull()
                     if (previewRes != null &&
                         !isStoppingFlag.get() &&
                         _state.value.isSpeechActive &&
@@ -303,18 +306,27 @@ class RecordingCoordinator(
 
             // ASR + Glossary + Translation consumer coroutine
             asrWorkerJob = scope.launch(Dispatchers.Default) {
+                val overlapBuffer = SpeechChunkOverlapBuffer(sampleRate = 16000)
+                var lastAcceptedText = ""
                 try {
                     if (loadedAsr != null) {
                         for (chunk in chunkChannel) {
                             isMainAsrBusy.set(true)
                             try {
-                                processSpeechChunk(
+                                val snapshot = settingsRepo.settingsFlow.first()
+                                val stitched = overlapBuffer.process(chunk, snapshot.dspConfig.vadMaxSpeechSec)
+                                val accepted = processSpeechChunk(
                                     sessionId = sessionId,
-                                    chunk = chunk,
+                                    chunk = stitched.chunk,
+                                    hasPrependedOverlap = stitched.hasPrependedOverlap,
+                                    previousText = lastAcceptedText,
                                     asrEngine = loadedAsr,
-                                    settingsSnapshot = settingsRepo.settingsFlow.first(),
+                                    settingsSnapshot = snapshot,
                                     activeTerms = database.glossaryDao().getActiveEntries().map { it.toDomain() }
                                 )
+                                if (accepted != null) {
+                                    lastAcceptedText = accepted
+                                }
                             } finally {
                                 isMainAsrBusy.set(false)
                             }
@@ -562,11 +574,15 @@ class RecordingCoordinator(
                 )
 
                 var written = 0
-                chunks.forEachIndexed { idx, chunk ->
+                val overlapBuffer = SpeechChunkOverlapBuffer(sampleRate = 16000)
+                var lastAcceptedText = ""
+                chunks.forEachIndexed { idx, rawChunk ->
                     val pct = 0.25f + 0.75f * (idx.toFloat() / maxOf(1, chunks.size))
                     onProgress(pct, "离线重转写中 (${idx + 1}/${chunks.size})...")
 
-                    val asrRes = asr.transcribe(chunk.samples, 16000)
+                    val stitched = overlapBuffer.process(rawChunk, settings.dspConfig.vadMaxSpeechSec)
+                    val prepared = AudioChunkPreprocessor.prepareForAsr(stitched.chunk.samples, 16000)
+                    val asrRes = asr.transcribe(prepared, 16000)
                     if (!SherpaSenseVoiceEngine.isMeaningfulSpeech(
                             asrRes.text,
                             asrRes.detectedLanguage,
@@ -574,15 +590,28 @@ class RecordingCoordinator(
                         )
                     ) return@forEachIndexed
 
-                    val correction = corrector.correct(asrRes.text)
+                    val dedupedText = if (stitched.hasPrependedOverlap) {
+                        AudioChunkPreprocessor.deduplicateBoundaryOverlap(lastAcceptedText, asrRes.text)
+                    } else {
+                        asrRes.text
+                    }
+                    if (!SherpaSenseVoiceEngine.isMeaningfulSpeech(
+                            dedupedText,
+                            asrRes.detectedLanguage,
+                            settings.asrLanguageMode
+                        )
+                    ) return@forEachIndexed
+                    lastAcceptedText = dedupedText
+
+                    val correction = corrector.correct(dedupedText)
                     val offlineTrans = translationRouter.translateLive(
                         sourceText = correction.correctedText,
                         direction = settings.translationDirection,
                         terms = activeTerms,
                         llmConfig = settings.llmConfig.copy(enableLiveOnlineTranslation = false)
                     )
-                    val startMs = (chunk.startSampleIndex * 1000L) / 16000L
-                    val endMs = startMs + (chunk.samples.size * 1000L) / 16000L
+                    val startMs = (rawChunk.startSampleIndex * 1000L) / 16000L
+                    val endMs = startMs + (rawChunk.samples.size * 1000L) / 16000L
 
                     database.lectureDao().insertSegment(
                         TranscriptSegmentEntity(
@@ -590,7 +619,7 @@ class RecordingCoordinator(
                             indexInSession = written++,
                             startMs = startMs,
                             endMs = endMs,
-                            rawText = asrRes.text,
+                            rawText = dedupedText,
                             correctedText = correction.correctedText,
                             offlineTranslation = offlineTrans.translatedText,
                             correctionSpansJson = json.encodeToString(correction.spans),
@@ -612,17 +641,32 @@ class RecordingCoordinator(
     private suspend fun processSpeechChunk(
         sessionId: Long,
         chunk: VadSpeechChunk,
+        hasPrependedOverlap: Boolean = false,
+        previousText: String = "",
         asrEngine: OfflineAsrEngine,
         settingsSnapshot: AppSettings,
         activeTerms: List<GlossaryTerm>
-    ) {
-        val asrRes = runCatching { asrEngine.transcribe(chunk.samples, 16000) }.getOrNull() ?: return
+    ): String? {
+        val prepared = AudioChunkPreprocessor.prepareForAsr(chunk.samples, 16000)
+        val asrRes = runCatching { asrEngine.transcribe(prepared, 16000) }.getOrNull() ?: return null
         if (!SherpaSenseVoiceEngine.isMeaningfulSpeech(
                 asrRes.text,
                 asrRes.detectedLanguage,
                 settingsSnapshot.asrLanguageMode
             )
-        ) return
+        ) return null
+
+        val dedupedText = if (hasPrependedOverlap) {
+            AudioChunkPreprocessor.deduplicateBoundaryOverlap(previousText, asrRes.text)
+        } else {
+            asrRes.text
+        }
+        if (!SherpaSenseVoiceEngine.isMeaningfulSpeech(
+                dedupedText,
+                asrRes.detectedLanguage,
+                settingsSnapshot.asrLanguageMode
+            )
+        ) return null
 
         _state.update { it.copy(lastInferenceMs = asrRes.inferenceTimeMs) }
 
@@ -630,7 +674,7 @@ class RecordingCoordinator(
             terms = activeTerms,
             enablePinyinFuzzy = settingsSnapshot.enablePinyinTermCorrection
         )
-        val correction = corrector.correct(asrRes.text)
+        val correction = corrector.correct(dedupedText)
 
         val transOutcome = translationRouter.translateLive(
             sourceText = correction.correctedText,
@@ -650,7 +694,7 @@ class RecordingCoordinator(
                 indexInSession = idx,
                 startMs = startMs,
                 endMs = endMs,
-                rawText = asrRes.text,
+                rawText = dedupedText,
                 correctedText = correction.correctedText,
                 offlineTranslation = transOutcome.translatedText,
                 correctionSpansJson = json.encodeToString(correction.spans),
@@ -659,5 +703,6 @@ class RecordingCoordinator(
                 syncStatus = SegmentSyncStatus.PENDING
             )
         )
+        return dedupedText
     }
 }

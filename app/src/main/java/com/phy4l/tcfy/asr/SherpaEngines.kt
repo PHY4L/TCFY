@@ -97,8 +97,9 @@ class SherpaSenseVoiceEngine(
         }
 
         /**
-         * Rejects pure-punctuation hallucinations (e.g. ".", "?") and stray 1-char Hangul/Kana
-         * noise hallucinations that SenseVoice sometimes emits in noisy cafeterias under auto mode.
+         * Rejects pure-punctuation hallucinations (e.g. ".", "?") and stray 1-2 char Hangul/Kana
+         * noise hallucinations that SenseVoice sometimes emits in noisy cafeterias or on PA reverb
+         * and accented Mandarin under auto mode.
          */
         fun isMeaningfulSpeech(
             text: String,
@@ -107,12 +108,15 @@ class SherpaSenseVoiceEngine(
         ): Boolean {
             val contentOnly = text.replace(PUNCT_AND_SPACE_REGEX, "")
             if (contentOnly.isEmpty()) return false
-            // Drop single-character non-ZH/EN noise artifacts (e.g. Korean "그." or single "I.")
-            if (requestedMode == AsrLanguageMode.AUTO && contentOnly.length == 1) {
-                val ch = contentOnly[0]
-                val isHangul = ch.code in 0xAC00..0xD7AF || ch.code in 0x1100..0x11FF
-                val isKana = ch.code in 0x3040..0x30FF
-                if (isHangul || isKana || detectedLang.equals("ko", ignoreCase = true) || detectedLang.equals("ja", ignoreCase = true)) {
+            // Drop short non-ZH/EN Hangul/Kana noise artifacts under AUTO mode (e.g. "그.", "あの")
+            if (requestedMode == AsrLanguageMode.AUTO && contentOnly.length <= 2) {
+                val allHangulOrKana = contentOnly.all { ch ->
+                    ch.code in 0xAC00..0xD7AF || ch.code in 0x1100..0x11FF || ch.code in 0x3040..0x30FF
+                }
+                if (allHangulOrKana ||
+                    (contentOnly.length == 1 &&
+                        (detectedLang.equals("ko", ignoreCase = true) || detectedLang.equals("ja", ignoreCase = true)))
+                ) {
                     return false
                 }
             }
@@ -126,10 +130,10 @@ class SherpaSenseVoiceEngine(
  */
 class SherpaSileroVadEngine(
     sileroModelFile: File,
-    threshold: Float = 0.35f,
-    minSilenceDurationSec: Float = 0.65f,
-    minSpeechDurationSec: Float = 0.25f,
-    maxSpeechDurationSec: Float = 14.0f,
+    threshold: Float = 0.24f,
+    minSilenceDurationSec: Float = 0.55f,
+    minSpeechDurationSec: Float = 0.20f,
+    maxSpeechDurationSec: Float = 13.0f,
     sampleRate: Int = 16000
 ) : VadSegmenter {
 
@@ -141,9 +145,9 @@ class SherpaSileroVadEngine(
         val config = VadModelConfig(
             sileroVadModelConfig = SileroVadModelConfig(
                 model = sileroModelFile.absolutePath,
-                threshold = threshold.coerceIn(0.15f, 0.85f),
-                minSilenceDuration = minSilenceDurationSec.coerceIn(0.2f, 2.5f),
-                minSpeechDuration = minSpeechDurationSec.coerceIn(0.1f, 1.5f),
+                threshold = threshold.coerceIn(0.10f, 0.85f),
+                minSilenceDuration = minSilenceDurationSec.coerceIn(0.20f, 2.5f),
+                minSpeechDuration = minSpeechDurationSec.coerceIn(0.10f, 1.5f),
                 windowSize = 512,
                 maxSpeechDuration = maxSpeechDurationSec.coerceIn(5.0f, 30.0f)
             ),

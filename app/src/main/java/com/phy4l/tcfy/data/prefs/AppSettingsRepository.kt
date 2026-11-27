@@ -54,8 +54,12 @@ class AppSettingsRepository(private val context: Context) {
         val ENABLE_HPF = booleanPreferencesKey("enable_hpf")
         val ENABLE_AGC = booleanPreferencesKey("enable_agc")
         val MAX_GAIN_DB = floatPreferencesKey("max_gain_db")
+        val AGC_SILENCE_FLOOR = floatPreferencesKey("agc_silence_floor")
         val VAD_THRESHOLD = floatPreferencesKey("vad_threshold")
         val VAD_MIN_SILENCE = floatPreferencesKey("vad_min_silence")
+        val VAD_MAX_SPEECH = floatPreferencesKey("vad_max_speech")
+        val PA_ANTI_RESONANCE = booleanPreferencesKey("pa_anti_resonance")
+        val FAST_SPEECH_MODE = booleanPreferencesKey("fast_speech_mode")
 
         val ASR_LANGUAGE = stringPreferencesKey("asr_language")
         val ASR_THREADS = intPreferencesKey("asr_threads")
@@ -85,16 +89,18 @@ class AppSettingsRepository(private val context: Context) {
             enableAgc = prefs[Keys.ENABLE_AGC] ?: defaultDsp.enableAgc,
             targetRmsDbfs = defaultDsp.targetRmsDbfs,
             maxGainDb = prefs[Keys.MAX_GAIN_DB] ?: defaultDsp.maxGainDb,
-            agcSilenceFloorDbfs = defaultDsp.agcSilenceFloorDbfs,
+            agcSilenceFloorDbfs = prefs[Keys.AGC_SILENCE_FLOOR] ?: defaultDsp.agcSilenceFloorDbfs,
             denoiseLevel = prefs[Keys.DENOISE_LEVEL]?.let {
                 runCatching { DenoiseLevel.valueOf(it) }.getOrNull()
             } ?: defaultDsp.denoiseLevel,
             vadThreshold = prefs[Keys.VAD_THRESHOLD] ?: defaultDsp.vadThreshold,
             vadMinSilenceSec = prefs[Keys.VAD_MIN_SILENCE] ?: defaultDsp.vadMinSilenceSec,
-            vadMaxSpeechSec = defaultDsp.vadMaxSpeechSec,
+            vadMaxSpeechSec = prefs[Keys.VAD_MAX_SPEECH] ?: defaultDsp.vadMaxSpeechSec,
             audioSourceMode = prefs[Keys.AUDIO_SOURCE]?.let {
                 runCatching { AudioSourceMode.valueOf(it) }.getOrNull()
-            } ?: defaultDsp.audioSourceMode
+            } ?: defaultDsp.audioSourceMode,
+            paAntiResonance = prefs[Keys.PA_ANTI_RESONANCE] ?: defaultDsp.paAntiResonance,
+            fastSpeechMode = prefs[Keys.FAST_SPEECH_MODE] ?: defaultDsp.fastSpeechMode
         )
 
         AppSettings(
@@ -131,8 +137,12 @@ class AppSettingsRepository(private val context: Context) {
             p[Keys.ENABLE_HPF] = c.enableHighPass
             p[Keys.ENABLE_AGC] = c.enableAgc
             p[Keys.MAX_GAIN_DB] = c.maxGainDb
+            p[Keys.AGC_SILENCE_FLOOR] = c.agcSilenceFloorDbfs
             p[Keys.VAD_THRESHOLD] = c.vadThreshold
             p[Keys.VAD_MIN_SILENCE] = c.vadMinSilenceSec
+            p[Keys.VAD_MAX_SPEECH] = c.vadMaxSpeechSec
+            p[Keys.PA_ANTI_RESONANCE] = c.paAntiResonance
+            p[Keys.FAST_SPEECH_MODE] = c.fastSpeechMode
         }
     }
 
@@ -143,8 +153,12 @@ class AppSettingsRepository(private val context: Context) {
             p[Keys.ENABLE_HPF] = dsp.enableHighPass
             p[Keys.ENABLE_AGC] = dsp.enableAgc
             p[Keys.MAX_GAIN_DB] = dsp.maxGainDb
+            p[Keys.AGC_SILENCE_FLOOR] = dsp.agcSilenceFloorDbfs
             p[Keys.VAD_THRESHOLD] = dsp.vadThreshold
             p[Keys.VAD_MIN_SILENCE] = dsp.vadMinSilenceSec
+            p[Keys.VAD_MAX_SPEECH] = dsp.vadMaxSpeechSec
+            p[Keys.PA_ANTI_RESONANCE] = dsp.paAntiResonance
+            p[Keys.FAST_SPEECH_MODE] = dsp.fastSpeechMode
         }
     }
 
