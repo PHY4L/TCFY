@@ -110,3 +110,28 @@
   2. 移除 `.fallbackToDestructiveMigration()`；
   3. 同步验证升级后已有记录与术语库完整保留。
 - **约束与影响**：任何未提供显式 `Migration` 的数据库版本递增都视为违反红线。
+
+---
+
+## ADR-010：极轻声前置预增益、PA 抗混响均衡与录音中自适应调参（2026-11-27）
+
+- **状态**：生效中
+- **背景**：实测中存在三类远场痛点：① 轻声汇报人（< -50 dBFS）直接进入 GTCRN 会被误判为底噪吞掉，且固定 `-54 dBFS` 静音门限导致 AGC 不工作；② 教室扩音器 PA 声音含 100–300 Hz 箱体轰鸣与峰值削波，强 GTCRN 干湿比会涂抹谐波；③ 快语速/口音汇报人长时间不停顿易触发 VAD 强制腰斩。
+- **决策**：
+  - `FarFieldDspPipeline` 升级为「HPF → 可选 PA 抗共振均衡 → 动态噪声底追踪 + GTCRN 前置预增益 → 自适应 AGC（最高 +40 dB）→ PA 软膝压缩 + tanh 限幅」；
+  - `AudioChunkPreprocessor` 在送入离线 ASR 前统一做段级 RMS 归一化与 120ms 前后静音留白，`SpeechChunkOverlapBuffer` 在 VAD 强制切分时保留 450ms 重叠并做边界词去重；
+  - 新增 `AcousticPreset.AUTO` 与 `LiveAcousticAutoTuner`，支持前几分钟自动校准及一键手动「调参」，需要变更 VAD 门限时在采集协程内安全 flush 并热重建 `SherpaSileroVadEngine`。
+- **约束与影响**：保持原始 WAV 落盘位于所有 DSP/均衡之前；VAD 热重建必须在采集线程内完成旧实例 `close()`，杜绝原生内存泄漏。
+
+---
+
+## ADR-011：内置 <1MB 基础模型、多语/单语 ASR 工厂与多镜像测速降级（2026-11-27）
+
+- **状态**：生效中
+- **背景**：Silero VAD（629 KB）与 GTCRN（524 KB）合计仅约 1.15 MB，却要求用户首次逐一下载；同时部分同学仅需纯中文、纯英文或粤语轻量模型，而单一镜像源在国内校园网偶发波动。
+- **决策**：
+  - 将 `silero_vad.onnx` 与 `gtcrn_simple.onnx` 内置至 `app/src/main/assets/models/`，`ModelManager` 初始化时幂等释放至 `files/models/`；
+  - 新增 `SherpaOfflineAsrFactory` 统一封装 `SenseVoice`、`Paraformer-ZH Small`、`Whisper-Tiny/Base.en` 与 `WenetSpeech-Yue`；`isCoreAsrReady()` 改为「VAD 就绪且至少安装任意一个 ASR 模型」；
+  - 新增 `MirrorLatencySelector` 在下载前并发发送轻量化 HTTP `HEAD`/1-byte `Range GET` 测速多组 HF 与 GitHub 加速镜像，按延迟从低到高排序并在失败时逐级降级。
+- **约束与影响**：不删除已有 `ModelType` 与 `AppSettingsRepository` 键名，老用户默认沿用 `sensevoice_small_int8` 且无损兼容。
+
