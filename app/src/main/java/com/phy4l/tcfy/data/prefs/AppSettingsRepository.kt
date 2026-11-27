@@ -41,6 +41,7 @@ data class AppSettings(
     val useDomesticMirror: Boolean = true,
     val customMirrorBase: String = "",
     val largeSubtitleFont: Boolean = false,
+    val pinAcousticPresetBar: Boolean = false,
     val llmConfig: LlmApiConfig = LlmApiConfig()
 )
 
@@ -63,6 +64,7 @@ class AppSettingsRepository(private val context: Context) {
         val USE_DOMESTIC_MIRROR = booleanPreferencesKey("use_domestic_mirror")
         val CUSTOM_MIRROR = stringPreferencesKey("custom_mirror")
         val LARGE_FONT = booleanPreferencesKey("large_font")
+        val PIN_ACOUSTIC_BAR = booleanPreferencesKey("pin_acoustic_bar")
 
         val LLM_PROVIDER = stringPreferencesKey("llm_provider")
         val LLM_BASE_URL = stringPreferencesKey("llm_base_url")
@@ -109,6 +111,7 @@ class AppSettingsRepository(private val context: Context) {
             useDomesticMirror = prefs[Keys.USE_DOMESTIC_MIRROR] ?: true,
             customMirrorBase = prefs[Keys.CUSTOM_MIRROR] ?: "",
             largeSubtitleFont = prefs[Keys.LARGE_FONT] ?: false,
+            pinAcousticPresetBar = prefs[Keys.PIN_ACOUSTIC_BAR] ?: false,
             llmConfig = LlmApiConfig(
                 providerName = prefs[Keys.LLM_PROVIDER] ?: "DeepSeek",
                 baseUrl = prefs[Keys.LLM_BASE_URL] ?: "https://api.deepseek.com/v1",
@@ -170,6 +173,10 @@ class AppSettingsRepository(private val context: Context) {
 
     suspend fun updateLargeFont(enabled: Boolean) {
         context.tcfyDataStore.edit { it[Keys.LARGE_FONT] = enabled }
+    }
+
+    suspend fun updatePinAcousticBar(pinned: Boolean) {
+        context.tcfyDataStore.edit { it[Keys.PIN_ACOUSTIC_BAR] = pinned }
     }
 
     suspend fun updateLlmConfig(config: LlmApiConfig) {

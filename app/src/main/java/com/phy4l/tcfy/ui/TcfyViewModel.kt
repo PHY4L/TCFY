@@ -492,6 +492,10 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { settingsRepo.updateLargeFont(enabled) }
     }
 
+    fun updatePinAcousticBar(pinned: Boolean) {
+        viewModelScope.launch { settingsRepo.updatePinAcousticBar(pinned) }
+    }
+
     fun updateMirrorSettings(useDomestic: Boolean, customBase: String) {
         viewModelScope.launch { settingsRepo.updateMirrorSettings(useDomestic, customBase) }
     }

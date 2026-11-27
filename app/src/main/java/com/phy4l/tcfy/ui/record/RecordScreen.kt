@@ -1,5 +1,6 @@
 package com.phy4l.tcfy.ui.record
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,6 +29,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -36,6 +39,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -67,6 +71,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.launch
@@ -214,18 +219,85 @@ fun RecordScreen(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Acoustic Preset Chips
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
+        // Collapsible Acoustic Preset Bar (collapses after picking unless user pins it)
+        var acousticBarExpanded by rememberSaveable { mutableStateOf(false) }
+        val activePreset = remember(settings.acousticPresetName) {
+            runCatching { AcousticPreset.valueOf(settings.acousticPresetName) }
+                .getOrDefault(AcousticPreset.CLASSROOM_FAR_FIELD)
+        }
+        val showAcousticChips = settings.pinAcousticPresetBar || acousticBarExpanded
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            items(AcousticPreset.entries) { preset ->
-                val selected = settings.acousticPresetName == preset.name
-                FilterChip(
-                    selected = selected,
-                    onClick = { viewModel.applyAcousticPreset(preset) },
-                    label = { Text(preset.displayName, fontSize = 12.sp) }
-                )
+            AssistChip(
+                onClick = {
+                    if (settings.pinAcousticPresetBar) {
+                        viewModel.updatePinAcousticBar(false)
+                        acousticBarExpanded = false
+                    } else {
+                        acousticBarExpanded = !acousticBarExpanded
+                    }
+                },
+                leadingIcon = {
+                    Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                },
+                label = {
+                    Text(
+                        text = "声学：${activePreset.displayName}",
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                trailingIcon = {
+                    Icon(
+                        imageVector = if (showAcousticChips) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (showAcousticChips) "收起声学模式" else "展开声学模式",
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            )
+
+            if (showAcousticChips) {
+                TextButton(
+                    onClick = {
+                        val nextPinned = !settings.pinAcousticPresetBar
+                        viewModel.updatePinAcousticBar(nextPinned)
+                        if (!nextPinned) acousticBarExpanded = false
+                    },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = if (settings.pinAcousticPresetBar) "已常驻 · 点此改为选后收起" else "常驻显示",
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(visible = showAcousticChips) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp)
+            ) {
+                items(AcousticPreset.entries) { preset ->
+                    val selected = settings.acousticPresetName == preset.name
+                    FilterChip(
+                        selected = selected,
+                        onClick = {
+                            viewModel.applyAcousticPreset(preset)
+                            if (!settings.pinAcousticPresetBar) {
+                                acousticBarExpanded = false
+                            }
+                        },
+                        label = { Text(preset.displayName, fontSize = 12.sp) }
+                    )
+                }
             }
         }
 
