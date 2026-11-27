@@ -14,6 +14,9 @@ data class RecordingUiState(
     val activeAudioSourceLabel: String = "",
     val asrModeLabel: String = "",
     val lastInferenceMs: Long = 0L,
+    val autoTuneSummary: String? = null,
+    val isBuildingLiveGlossary: Boolean = false,
+    val liveGlossaryStatus: String? = null,
     val errorMessage: String? = null,
     val warningMessage: String? = null
 )

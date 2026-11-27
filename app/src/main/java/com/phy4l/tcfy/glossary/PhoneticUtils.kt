@@ -41,7 +41,11 @@ object PhoneticUtils {
     }
 
     /**
-     * Normalizes a pinyin syllable to collapse common far-field/accent confusions.
+     * Normalizes a pinyin syllable to collapse common far-field/accent confusions:
+     * - flat/retroflex: zh/z, ch/c, sh/s
+     * - nasal/lateral: l/n
+     * - labial/velar fricative accents (Southern/Southwestern Mandarin): f/h (fu/hu, fa/ha, fei/hui, fang/hang, feng/heng)
+     * - alveolar/velar nasal codas: in/ing, en/eng, an/ang
      */
     fun normalizeFuzzySyllable(syllable: String): String {
         var s = syllable.lowercase().trim()
@@ -49,7 +53,9 @@ object PhoneticUtils {
         else if (s.startsWith("ch")) s = "c" + s.substring(2)
         else if (s.startsWith("sh")) s = "s" + s.substring(2)
         else if (s.startsWith("l") && s.length > 1) s = "n" + s.substring(1)
-        else if (s.startsWith("f") && s.length > 1 && s[1] == 'u') s = "hu" + s.substring(2)
+        else if (s.startsWith("f") && s.length > 1 && s[1] in charArrayOf('u', 'a', 'e', 'o')) {
+            s = "h" + s.substring(1)
+        }
 
         if (s.endsWith("ing")) s = s.dropLast(1)
         else if (s.endsWith("eng")) s = s.dropLast(1)
@@ -61,7 +67,7 @@ object PhoneticUtils {
 
     /**
      * Computes syllable-level phonetic similarity between two equal-length CJK strings (0.0..1.0).
-     * Exact syllable match = 1.0, fuzzy-normalized match = 0.90, 1-char edit = 0.55.
+     * Exact syllable match = 1.0, fuzzy-normalized match = 0.92, r/l accent swap = 0.86, 1-char edit = 0.60.
      */
     fun cjkPhoneticSimilarity(a: String, b: String): Double {
         if (a.length != b.length || a.isEmpty()) return 0.0
@@ -76,11 +82,15 @@ object PhoneticUtils {
             var best = 0.0
             for (sa in pA) {
                 for (sb in pB) {
+                    val normA = normalizeFuzzySyllable(sa)
+                    val normB = normalizeFuzzySyllable(sb)
                     val score = when {
                         sa == sb -> 1.0
-                        normalizeFuzzySyllable(sa) == normalizeFuzzySyllable(sb) -> 0.92
-                        levenshtein(normalizeFuzzySyllable(sa), normalizeFuzzySyllable(sb)) == 1 &&
-                            maxOf(sa.length, sb.length) >= 3 -> 0.60
+                        normA == normB -> 0.92
+                        // Common regional accent confusion: r <-> l / n (e.g. "热/勒", "容/农")
+                        (normA.startsWith("r") && normB.startsWith("n") && normA.substring(1) == normB.substring(1)) ||
+                            (normB.startsWith("r") && normA.startsWith("n") && normA.substring(1) == normB.substring(1)) -> 0.86
+                        levenshtein(normA, normB) == 1 && maxOf(sa.length, sb.length) >= 3 -> 0.60
                         else -> 0.0
                     }
                     if (score > best) best = score

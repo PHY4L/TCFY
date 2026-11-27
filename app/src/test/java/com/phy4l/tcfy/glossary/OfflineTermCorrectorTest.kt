@@ -89,7 +89,21 @@ class OfflineTermCorrectorTest {
         assertFalse(com.phy4l.tcfy.asr.SherpaSenseVoiceEngine.isMeaningfulSpeech(".", "en"))
         assertFalse(com.phy4l.tcfy.asr.SherpaSenseVoiceEngine.isMeaningfulSpeech("...", "zh"))
         assertFalse(com.phy4l.tcfy.asr.SherpaSenseVoiceEngine.isMeaningfulSpeech("그.", "ko"))
+        assertFalse(com.phy4l.tcfy.asr.SherpaSenseVoiceEngine.isMeaningfulSpeech("あの", "ja"))
         assertTrue(com.phy4l.tcfy.asr.SherpaSenseVoiceEngine.isMeaningfulSpeech("转录因子结合启动子。", "zh"))
         assertTrue(com.phy4l.tcfy.asr.SherpaSenseVoiceEngine.isMeaningfulSpeech("CRISPR-Cas9", "en"))
+    }
+
+    @Test
+    fun correctsRegionalAccentFuzzyPinyinConfusions() {
+        val accentTerms = listOf(
+            GlossaryTerm(canonicalTerm = "傅里叶变换", translation = "Fourier Transform"),
+            GlossaryTerm(canonicalTerm = "热力学定律", translation = "Laws of Thermodynamics")
+        )
+        val corrector = OfflineTermCorrector(accentTerms, enablePinyinFuzzy = true)
+        // f/h + l/n confusion ("胡你叶变换") and r/l confusion ("勒力学定律")
+        val res = corrector.correct("今天讲解胡你叶变换与勒力学定律。")
+        assertTrue("Expected 傅里叶变换 in: ${res.correctedText}", res.correctedText.contains("傅里叶变换"))
+        assertTrue("Expected 热力学定律 in: ${res.correctedText}", res.correctedText.contains("热力学定律"))
     }
 }

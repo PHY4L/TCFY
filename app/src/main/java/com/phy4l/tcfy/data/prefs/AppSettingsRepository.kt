@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.phy4l.tcfy.asr.AsrLanguageMode
+import com.phy4l.tcfy.asr.ModelCatalog
 import com.phy4l.tcfy.audio.AcousticPreset
 import com.phy4l.tcfy.audio.AudioSourceMode
 import com.phy4l.tcfy.audio.DenoiseLevel
@@ -34,6 +35,7 @@ data class LlmApiConfig(
 data class AppSettings(
     val dspConfig: FarFieldDspConfig = AcousticPreset.CLASSROOM_FAR_FIELD.config,
     val acousticPresetName: String = AcousticPreset.CLASSROOM_FAR_FIELD.name,
+    val activeAsrModelId: String = ModelCatalog.SENSEVOICE_INT8.id,
     val asrLanguageMode: AsrLanguageMode = AsrLanguageMode.AUTO,
     val asrThreads: Int = 4,
     val translationDirection: TranslationDirection = TranslationDirection.AUTO_BILINGUAL,
@@ -42,6 +44,7 @@ data class AppSettings(
     val customMirrorBase: String = "",
     val largeSubtitleFont: Boolean = false,
     val pinAcousticPresetBar: Boolean = false,
+    val enableAutoLiveGlossary: Boolean = false,
     val llmConfig: LlmApiConfig = LlmApiConfig()
 )
 
@@ -54,9 +57,14 @@ class AppSettingsRepository(private val context: Context) {
         val ENABLE_HPF = booleanPreferencesKey("enable_hpf")
         val ENABLE_AGC = booleanPreferencesKey("enable_agc")
         val MAX_GAIN_DB = floatPreferencesKey("max_gain_db")
+        val AGC_SILENCE_FLOOR = floatPreferencesKey("agc_silence_floor")
         val VAD_THRESHOLD = floatPreferencesKey("vad_threshold")
         val VAD_MIN_SILENCE = floatPreferencesKey("vad_min_silence")
+        val VAD_MAX_SPEECH = floatPreferencesKey("vad_max_speech")
+        val PA_ANTI_RESONANCE = booleanPreferencesKey("pa_anti_resonance")
+        val FAST_SPEECH_MODE = booleanPreferencesKey("fast_speech_mode")
 
+        val ACTIVE_ASR_MODEL_ID = stringPreferencesKey("active_asr_model_id")
         val ASR_LANGUAGE = stringPreferencesKey("asr_language")
         val ASR_THREADS = intPreferencesKey("asr_threads")
         val TRANS_DIRECTION = stringPreferencesKey("trans_direction")
@@ -65,6 +73,7 @@ class AppSettingsRepository(private val context: Context) {
         val CUSTOM_MIRROR = stringPreferencesKey("custom_mirror")
         val LARGE_FONT = booleanPreferencesKey("large_font")
         val PIN_ACOUSTIC_BAR = booleanPreferencesKey("pin_acoustic_bar")
+        val AUTO_LIVE_GLOSSARY = booleanPreferencesKey("auto_live_glossary")
 
         val LLM_PROVIDER = stringPreferencesKey("llm_provider")
         val LLM_BASE_URL = stringPreferencesKey("llm_base_url")
@@ -85,21 +94,24 @@ class AppSettingsRepository(private val context: Context) {
             enableAgc = prefs[Keys.ENABLE_AGC] ?: defaultDsp.enableAgc,
             targetRmsDbfs = defaultDsp.targetRmsDbfs,
             maxGainDb = prefs[Keys.MAX_GAIN_DB] ?: defaultDsp.maxGainDb,
-            agcSilenceFloorDbfs = defaultDsp.agcSilenceFloorDbfs,
+            agcSilenceFloorDbfs = prefs[Keys.AGC_SILENCE_FLOOR] ?: defaultDsp.agcSilenceFloorDbfs,
             denoiseLevel = prefs[Keys.DENOISE_LEVEL]?.let {
                 runCatching { DenoiseLevel.valueOf(it) }.getOrNull()
             } ?: defaultDsp.denoiseLevel,
             vadThreshold = prefs[Keys.VAD_THRESHOLD] ?: defaultDsp.vadThreshold,
             vadMinSilenceSec = prefs[Keys.VAD_MIN_SILENCE] ?: defaultDsp.vadMinSilenceSec,
-            vadMaxSpeechSec = defaultDsp.vadMaxSpeechSec,
+            vadMaxSpeechSec = prefs[Keys.VAD_MAX_SPEECH] ?: defaultDsp.vadMaxSpeechSec,
             audioSourceMode = prefs[Keys.AUDIO_SOURCE]?.let {
                 runCatching { AudioSourceMode.valueOf(it) }.getOrNull()
-            } ?: defaultDsp.audioSourceMode
+            } ?: defaultDsp.audioSourceMode,
+            paAntiResonance = prefs[Keys.PA_ANTI_RESONANCE] ?: defaultDsp.paAntiResonance,
+            fastSpeechMode = prefs[Keys.FAST_SPEECH_MODE] ?: defaultDsp.fastSpeechMode
         )
 
         AppSettings(
             dspConfig = dsp,
             acousticPresetName = basePreset.name,
+            activeAsrModelId = prefs[Keys.ACTIVE_ASR_MODEL_ID] ?: ModelCatalog.SENSEVOICE_INT8.id,
             asrLanguageMode = prefs[Keys.ASR_LANGUAGE]?.let {
                 runCatching { AsrLanguageMode.valueOf(it) }.getOrNull()
             } ?: AsrLanguageMode.AUTO,
@@ -112,6 +124,7 @@ class AppSettingsRepository(private val context: Context) {
             customMirrorBase = prefs[Keys.CUSTOM_MIRROR] ?: "",
             largeSubtitleFont = prefs[Keys.LARGE_FONT] ?: false,
             pinAcousticPresetBar = prefs[Keys.PIN_ACOUSTIC_BAR] ?: false,
+            enableAutoLiveGlossary = prefs[Keys.AUTO_LIVE_GLOSSARY] ?: false,
             llmConfig = LlmApiConfig(
                 providerName = prefs[Keys.LLM_PROVIDER] ?: "DeepSeek",
                 baseUrl = prefs[Keys.LLM_BASE_URL] ?: "https://api.deepseek.com/v1",
@@ -131,8 +144,12 @@ class AppSettingsRepository(private val context: Context) {
             p[Keys.ENABLE_HPF] = c.enableHighPass
             p[Keys.ENABLE_AGC] = c.enableAgc
             p[Keys.MAX_GAIN_DB] = c.maxGainDb
+            p[Keys.AGC_SILENCE_FLOOR] = c.agcSilenceFloorDbfs
             p[Keys.VAD_THRESHOLD] = c.vadThreshold
             p[Keys.VAD_MIN_SILENCE] = c.vadMinSilenceSec
+            p[Keys.VAD_MAX_SPEECH] = c.vadMaxSpeechSec
+            p[Keys.PA_ANTI_RESONANCE] = c.paAntiResonance
+            p[Keys.FAST_SPEECH_MODE] = c.fastSpeechMode
         }
     }
 
@@ -143,9 +160,17 @@ class AppSettingsRepository(private val context: Context) {
             p[Keys.ENABLE_HPF] = dsp.enableHighPass
             p[Keys.ENABLE_AGC] = dsp.enableAgc
             p[Keys.MAX_GAIN_DB] = dsp.maxGainDb
+            p[Keys.AGC_SILENCE_FLOOR] = dsp.agcSilenceFloorDbfs
             p[Keys.VAD_THRESHOLD] = dsp.vadThreshold
             p[Keys.VAD_MIN_SILENCE] = dsp.vadMinSilenceSec
+            p[Keys.VAD_MAX_SPEECH] = dsp.vadMaxSpeechSec
+            p[Keys.PA_ANTI_RESONANCE] = dsp.paAntiResonance
+            p[Keys.FAST_SPEECH_MODE] = dsp.fastSpeechMode
         }
+    }
+
+    suspend fun updateActiveAsrModelId(modelId: String) {
+        context.tcfyDataStore.edit { it[Keys.ACTIVE_ASR_MODEL_ID] = modelId }
     }
 
     suspend fun updateAsrLanguage(mode: AsrLanguageMode) {
@@ -177,6 +202,10 @@ class AppSettingsRepository(private val context: Context) {
 
     suspend fun updatePinAcousticBar(pinned: Boolean) {
         context.tcfyDataStore.edit { it[Keys.PIN_ACOUSTIC_BAR] = pinned }
+    }
+
+    suspend fun updateAutoLiveGlossary(enabled: Boolean) {
+        context.tcfyDataStore.edit { it[Keys.AUTO_LIVE_GLOSSARY] = enabled }
     }
 
     suspend fun updateLlmConfig(config: LlmApiConfig) {

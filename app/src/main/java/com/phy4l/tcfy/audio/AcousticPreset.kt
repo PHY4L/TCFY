@@ -31,8 +31,8 @@ enum class AudioSourceMode(val displayName: String, val description: String) {
 @Serializable
 enum class DenoiseLevel(val displayName: String, val wetMix: Float) {
     OFF("关闭", 0.0f),
-    LIGHT("轻度 (保辅音)", 0.55f),
-    STANDARD("标准降噪", 0.78f)
+    LIGHT("轻度 (保辅音)", 0.48f),
+    STANDARD("标准降噪", 0.72f)
 }
 
 @Serializable
@@ -41,13 +41,15 @@ data class FarFieldDspConfig(
     val enableHighPass: Boolean = true,
     val enableAgc: Boolean = true,
     val targetRmsDbfs: Float = -18f,
-    val maxGainDb: Float = 24f,
-    val agcSilenceFloorDbfs: Float = -54f,
+    val maxGainDb: Float = 32f,
+    val agcSilenceFloorDbfs: Float = -66f,
     val denoiseLevel: DenoiseLevel = DenoiseLevel.LIGHT,
-    val vadThreshold: Float = 0.35f,
-    val vadMinSilenceSec: Float = 0.65f,
-    val vadMaxSpeechSec: Float = 14.0f,
-    val audioSourceMode: AudioSourceMode = AudioSourceMode.FAR_FIELD_AUTO
+    val vadThreshold: Float = 0.24f,
+    val vadMinSilenceSec: Float = 0.55f,
+    val vadMaxSpeechSec: Float = 13.0f,
+    val audioSourceMode: AudioSourceMode = AudioSourceMode.FAR_FIELD_AUTO,
+    val paAntiResonance: Boolean = false,
+    val fastSpeechMode: Boolean = false
 )
 
 enum class AcousticPreset(
@@ -55,38 +57,99 @@ enum class AcousticPreset(
     val shortHint: String,
     val config: FarFieldDspConfig
 ) {
-    CLASSROOM_FAR_FIELD(
-        displayName = "教室远场 (3-10m)",
-        shortHint = "高增益 + 轻度神经降噪 + 敏感 VAD",
+    AUTO(
+        displayName = "自动智能",
+        shortHint = "录音前几分钟自动分析音量/混响/语速并动态调参",
         config = FarFieldDspConfig(
             highPassCutoffHz = 85f,
             enableHighPass = true,
             enableAgc = true,
             targetRmsDbfs = -18f,
-            maxGainDb = 24f,
-            agcSilenceFloorDbfs = -54f,
+            maxGainDb = 32f,
+            agcSilenceFloorDbfs = -66f,
             denoiseLevel = DenoiseLevel.LIGHT,
-            vadThreshold = 0.32f,
-            vadMinSilenceSec = 0.65f,
-            vadMaxSpeechSec = 14.0f,
-            audioSourceMode = AudioSourceMode.FAR_FIELD_AUTO
+            vadThreshold = 0.24f,
+            vadMinSilenceSec = 0.55f,
+            vadMaxSpeechSec = 13.0f,
+            audioSourceMode = AudioSourceMode.FAR_FIELD_AUTO,
+            paAntiResonance = false,
+            fastSpeechMode = false
+        )
+    ),
+    CLASSROOM_FAR_FIELD(
+        displayName = "教室远场 (3-10m)",
+        shortHint = "高增益 + 动态噪声门 + 敏感 VAD",
+        config = FarFieldDspConfig(
+            highPassCutoffHz = 85f,
+            enableHighPass = true,
+            enableAgc = true,
+            targetRmsDbfs = -18f,
+            maxGainDb = 32f,
+            agcSilenceFloorDbfs = -66f,
+            denoiseLevel = DenoiseLevel.LIGHT,
+            vadThreshold = 0.24f,
+            vadMinSilenceSec = 0.55f,
+            vadMaxSpeechSec = 13.0f,
+            audioSourceMode = AudioSourceMode.FAR_FIELD_AUTO,
+            paAntiResonance = false,
+            fastSpeechMode = false
+        )
+    ),
+    SOFT_VOICE_ULTRA(
+        displayName = "轻声 / 超远场",
+        shortHint = "最高 +38dB 增益，专治 -50dB 以下轻声汇报",
+        config = FarFieldDspConfig(
+            highPassCutoffHz = 80f,
+            enableHighPass = true,
+            enableAgc = true,
+            targetRmsDbfs = -17f,
+            maxGainDb = 38f,
+            agcSilenceFloorDbfs = -72f,
+            denoiseLevel = DenoiseLevel.LIGHT,
+            vadThreshold = 0.16f,
+            vadMinSilenceSec = 0.55f,
+            vadMaxSpeechSec = 12.0f,
+            audioSourceMode = AudioSourceMode.FAR_FIELD_AUTO,
+            paAntiResonance = false,
+            fastSpeechMode = false
         )
     ),
     LECTURE_HALL_PA(
         displayName = "大教室有扩音器",
-        shortHint = "中等增益 + 标准降噪抗混响",
+        shortHint = "抗箱体轰鸣均衡 + 防爆音压缩 + 轻降噪抗混响",
         config = FarFieldDspConfig(
-            highPassCutoffHz = 95f,
+            highPassCutoffHz = 125f,
             enableHighPass = true,
             enableAgc = true,
             targetRmsDbfs = -19f,
             maxGainDb = 16f,
-            agcSilenceFloorDbfs = -50f,
-            denoiseLevel = DenoiseLevel.STANDARD,
-            vadThreshold = 0.38f,
-            vadMinSilenceSec = 0.60f,
-            vadMaxSpeechSec = 14.0f,
-            audioSourceMode = AudioSourceMode.FAR_FIELD_AUTO
+            agcSilenceFloorDbfs = -56f,
+            denoiseLevel = DenoiseLevel.LIGHT,
+            vadThreshold = 0.34f,
+            vadMinSilenceSec = 0.52f,
+            vadMaxSpeechSec = 12.5f,
+            audioSourceMode = AudioSourceMode.FAR_FIELD_AUTO,
+            paAntiResonance = true,
+            fastSpeechMode = false
+        )
+    ),
+    FAST_ACCENT(
+        displayName = "快语速 / 口音",
+        shortHint = "短停顿分句 + 边界重叠防截词 + 保辅音清晰度",
+        config = FarFieldDspConfig(
+            highPassCutoffHz = 90f,
+            enableHighPass = true,
+            enableAgc = true,
+            targetRmsDbfs = -18f,
+            maxGainDb = 28f,
+            agcSilenceFloorDbfs = -64f,
+            denoiseLevel = DenoiseLevel.LIGHT,
+            vadThreshold = 0.24f,
+            vadMinSilenceSec = 0.38f,
+            vadMaxSpeechSec = 9.5f,
+            audioSourceMode = AudioSourceMode.FAR_FIELD_AUTO,
+            paAntiResonance = false,
+            fastSpeechMode = true
         )
     ),
     NEAR_FIELD(
@@ -97,13 +160,15 @@ enum class AcousticPreset(
             enableHighPass = true,
             enableAgc = true,
             targetRmsDbfs = -20f,
-            maxGainDb = 10f,
-            agcSilenceFloorDbfs = -52f,
+            maxGainDb = 12f,
+            agcSilenceFloorDbfs = -58f,
             denoiseLevel = DenoiseLevel.OFF,
-            vadThreshold = 0.42f,
-            vadMinSilenceSec = 0.55f,
-            vadMaxSpeechSec = 14.0f,
-            audioSourceMode = AudioSourceMode.MIC
+            vadThreshold = 0.38f,
+            vadMinSilenceSec = 0.50f,
+            vadMaxSpeechSec = 13.0f,
+            audioSourceMode = AudioSourceMode.MIC,
+            paAntiResonance = false,
+            fastSpeechMode = false
         )
     )
 }

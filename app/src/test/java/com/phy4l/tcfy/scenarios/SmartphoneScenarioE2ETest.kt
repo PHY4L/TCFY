@@ -1,14 +1,19 @@
 package com.phy4l.tcfy.scenarios
 
 import com.phy4l.tcfy.ai.LectureRefinerAndSummarizer
+import com.phy4l.tcfy.ai.LiveGlossaryBuilder
 import com.phy4l.tcfy.ai.OpenAiCompatibleClient
 import com.phy4l.tcfy.ai.RefinedSegmentItem
 import com.phy4l.tcfy.ai.TranslationRouter
 import com.phy4l.tcfy.asr.AsrLanguageMode
+import com.phy4l.tcfy.asr.ModelCatalog
 import com.phy4l.tcfy.asr.SherpaSenseVoiceEngine
 import com.phy4l.tcfy.audio.AcousticPreset
+import com.phy4l.tcfy.audio.AudioChunkPreprocessor
 import com.phy4l.tcfy.audio.CrashSafeWavWriter
+import com.phy4l.tcfy.audio.DiagnosedAcousticScene
 import com.phy4l.tcfy.audio.FarFieldDspPipeline
+import com.phy4l.tcfy.audio.LiveAcousticAutoTuner
 import com.phy4l.tcfy.data.db.LectureSessionEntity
 import com.phy4l.tcfy.data.db.SegmentSyncStatus
 import com.phy4l.tcfy.data.db.TranscriptSegmentEntity
@@ -627,6 +632,87 @@ class SmartphoneScenarioE2ETest {
         assertEquals(1, parsedBom.size)
         assertEquals("Promoter", parsedBom[0].canonicalTerm)
         assertEquals(listOf("启动只", "起动子"), parsedBom[0].aliases)
+    }
+
+    // -------------------------------------------------------------------------
+    // Scenario 5: Ultra-soft speaker (<-50dBFS) -> LiveAcousticAutoTuner hot-tune
+    //             -> AudioChunkPreprocessor -> Live AI Glossary -> instant correction
+    //             -> Bundled VAD/GTCRN & single-language ASR catalog sanity.
+    // -------------------------------------------------------------------------
+    @Test
+    fun scenario5_softVoiceAutoTune_liveAiGlossary_andMultiModelCatalog() = runTest {
+        val sampleRate = 16000
+        val dsp = FarFieldDspPipeline(sampleRate, AcousticPreset.AUTO.config)
+        val tuner = LiveAcousticAutoTuner()
+
+        // 1. Feed 60 frames (~1.2s simulated telemetry) of ultra-soft <-50 dBFS speaker
+        for (f in 0 until 60) {
+            val frame = FloatArray(320) { i ->
+                val n = f * 320 + i
+                0.0020f * sin(2.0 * PI * 850.0 * n / sampleRate).toFloat() // ~ -57 dBFS
+            }
+            dsp.processFloat(frame)
+            tuner.recordFrame(
+                inputDbfs = dsp.lastInputDbfs,
+                noiseFloorDbfs = dsp.lastNoiseFloorDbfs,
+                clipRatio = dsp.lastClipRatio,
+                isSpeech = true
+            )
+        }
+
+        // 2. Auto-tuner diagnoses ULTRA_SOFT_FAR_FIELD and recommends high gain + low VAD
+        val decision = tuner.evaluateAndTune(AcousticPreset.AUTO.config, minFrames = 40)
+        assertTrue(decision != null)
+        assertEquals(DiagnosedAcousticScene.ULTRA_SOFT_FAR_FIELD, decision!!.scene)
+        dsp.updateConfig(decision.recommendedConfig)
+
+        // 3. Re-process quiet voice chunk + normalize for ASR -> lifted into clear ASR loudness
+        val quietChunk = FloatArray(16000) { i -> 0.0020f * sin(2.0 * PI * 900.0 * i / sampleRate).toFloat() }
+        val prepared = AudioChunkPreprocessor.prepareForAsr(quietChunk, sampleRate)
+        val coreOutDb = FarFieldDspPipeline.computeRmsDbfs(prepared.copyOfRange(1920, 1920 + 16000))
+        assertTrue("Prepared chunk for ASR should be > -30 dBFS (was $coreOutDb)", coreOutDb > -30f)
+
+        // 4. Live AI Glossary analyzes opening transcript and feeds OfflineTermCorrector immediately
+        val server = MockWebServer()
+        server.start()
+        try {
+            val glossaryJson = """{"topic":"固体物理·能带论","discipline":"物理学","terms":[{"canonical_term":"Brillouin Zone","translation":"布里渊区","aliases":["布里渊曲","布力渊区"],"notes":"倒格空间原胞"}]}"""
+            server.enqueue(chatOkResponse(glossaryJson))
+
+            val builder = LiveGlossaryBuilder(OpenAiCompatibleClient())
+            val openingSegments = listOf(
+                TranscriptSegmentEntity(
+                    sessionId = 9L,
+                    indexInSession = 0,
+                    startMs = 0L,
+                    endMs = 15_000L,
+                    rawText = "这节课我们讨论晶体周期势场下的布洛赫定理以及倒格空间中的布里渊曲边界条件。",
+                    correctedText = "这节课我们讨论晶体周期势场下的布洛赫定理以及倒格空间中的布里渊曲边界条件。"
+                )
+            )
+            val builtRes = builder.buildFromTranscript(
+                segments = openingSegments,
+                existingActiveTerms = emptyList(),
+                llmConfig = LlmApiConfig(
+                    providerName = "Mock",
+                    baseUrl = server.url("/v1").toString(),
+                    apiKey = "sk-e2e",
+                    modelName = "mock"
+                )
+            )
+            assertTrue(builtRes.isSuccess)
+            val built = builtRes.getOrThrow()
+            val liveCorrector = OfflineTermCorrector(built.terms, enablePinyinFuzzy = true)
+            val nextSentence = liveCorrector.correct("电子波矢在第一布里渊曲边界处发生布拉格反射。")
+            assertTrue(nextSentence.correctedText.contains("Brillouin Zone"))
+        } finally {
+            server.shutdown()
+        }
+
+        // 5. Verify bundled <1MB models & specialized single-language ASR catalog
+        assertTrue(ModelCatalog.SILERO_VAD.bundledAssetPath != null)
+        assertTrue(ModelCatalog.GTCRN_DENOISER.bundledAssetPath != null)
+        assertTrue(ModelCatalog.ASR_MODELS.size >= 5)
     }
 
     private fun chatOkResponse(content: String): MockResponse {

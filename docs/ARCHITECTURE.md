@@ -39,15 +39,15 @@ flowchart LR
 
 | 包路径 | 核心文件 | 运行环境边界 | 职责说明 |
 | :--- | :--- | :--- | :--- |
-| `audio/` | `AcousticPreset.kt`、`FarFieldDspPipeline.kt`、`CrashSafeWavWriter.kt`、`ClassroomAudioCapturer.kt` | **除 `ClassroomAudioCapturer` 外为纯 JVM** | 声学预设、软件远场 DSP 链、防崩溃 WAV 读写与断电恢复、远场麦克风采集 |
-| `asr/` | `AsrInterfaces.kt`、`ModelCatalog.kt`、`ModelManager.kt`、`SherpaEngines.kt` | Android / JNI | `sherpa-onnx` 引擎抽象与 JNI 实现、模型目录与国内镜像下载、本地压缩包导入 |
-| `glossary/` | `GlossaryModels.kt`、`BuiltInGlossaries.kt`、`GlossaryImporter.kt`、`OfflineTermCorrector.kt`、`PhoneticUtils.kt` | **纯 JVM** | 术语数据结构、内置课程词库（分子生物学/物理/CS-AI）、CSV(UTF-8/GBK)/TXT/JSON 导入导出、三层离线纠错与拼音相似度 |
-| `ai/` | `LlmPresets.kt`、`OpenAiCompatibleClient.kt`、`TranslationEngine.kt`、`LectureRefinerAndSummarizer.kt` | **纯 JVM** | OpenAI 兼容接口客户端、主流国内模型预设、占位符术语保护与离线保底翻译路由、课后滑窗精修与 Markdown 总结 |
+| `audio/` | `AcousticPreset.kt`、`FarFieldDspPipeline.kt`、`AudioChunkPreprocessor.kt`、`LiveAcousticAutoTuner.kt`、`CrashSafeWavWriter.kt`、`ClassroomAudioCapturer.kt` | **除 `ClassroomAudioCapturer` 外为纯 JVM** | 声学预设（含 AUTO/轻声/快语速）、远场 DSP 与 PA 抗混响均衡、段级归一化与重叠防截断、实时自适应调参、防崩溃 WAV 与麦克风采集 |
+| `asr/` | `AsrInterfaces.kt`、`ModelCatalog.kt`、`MirrorLatencySelector.kt`、`ModelManager.kt`、`SherpaEngines.kt` | **MirrorLatencySelector / ModelCatalog 为纯 JVM**，其余 Android/JNI | 多架构离线 ASR 工厂（SenseVoice / Paraformer-ZH / Whisper-EN / Wenet-Yue）、内置 <1MB 模型释放、多镜像并发测速排序与本地导入 |
+| `glossary/` | `GlossaryModels.kt`、`BuiltInGlossaries.kt`、`GlossaryImporter.kt`、`OfflineTermCorrector.kt`、`PhoneticUtils.kt` | **纯 JVM** | 术语数据结构、内置课程词库（分子生物学/物理/CS-AI）、CSV(UTF-8/GBK)/TXT/JSON 导入导出、三层离线纠错与口音模糊音拼音相似度 |
+| `ai/` | `LlmPresets.kt`、`OpenAiCompatibleClient.kt`、`TranslationEngine.kt`、`LectureRefinerAndSummarizer.kt`、`LiveGlossaryBuilder.kt` | **纯 JVM** | OpenAI 兼容接口客户端、主流国内模型预设、占位符术语保护与离线保底翻译路由、课后滑窗精修总结与开讲前几分钟 AI 现场建词库 |
 | `data/db/` | `Entities.kt`、`Daos.kt`、`TcfyDatabase.kt` | Android / Room | 4 张核心表定义、Flow 响应式 DAO、数据库单例与首次幂等预置词库 |
 | `data/prefs/` | `AppSettingsRepository.kt` | Android / DataStore | `tcfy_settings` Preferences DataStore 与 `AppSettings` / `LlmApiConfig` 持久化 |
 | `data/export/` | `SessionExporter.kt` | **纯 JVM** | 导出 `.md`、双语 `.txt`、`.srt` 字幕及时间戳格式化 |
-| `service/` | `RecordingState.kt`、`RecordingCoordinator.kt`、`RecordingForegroundService.kt` | Android Service | 录音/转写/重转写全生命周期协调、前台麦克风通知保活、4 小时 `PARTIAL_WAKE_LOCK` |
-| `ui/` | `TcfyApp.kt`、`TcfyViewModel.kt`、`ui/record/`、`ui/history/`、`ui/glossary/`、`ui/settings/`、`ui/theme/` | Android / Compose | Material 3 单 Activity 四 Tab 界面、单一 `TcfyViewModel` 状态流与权限/返回手势处理 |
+| `service/` | `RecordingState.kt`、`RecordingCoordinator.kt`、`RecordingForegroundService.kt` | Android Service | 录音/转写/重转写/自动调参/VAD热重建/现场词库全生命周期协调、前台麦克风通知保活、4 小时 `PARTIAL_WAKE_LOCK` |
+| `ui/` | `TcfyApp.kt`、`TcfyViewModel.kt`、`ui/record/`（含 `RecordScrollPolicy.kt`）、`ui/history/`、`ui/glossary/`、`ui/settings/`、`ui/theme/` | Android / Compose | Material 3 单 Activity 四 Tab 界面、单一 `TcfyViewModel` 状态流、跨 Tab 滚动保活、可收起声学栏与权限/返回手势处理 |
 
 ### 依赖方向与装配原则
 
