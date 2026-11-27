@@ -150,6 +150,20 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun triggerLiveGlossaryBuild() {
+        viewModelScope.launch {
+            val res = coordinator.buildOrUpdateLiveGlossary(isAutoTrigger = false)
+            res.fold(
+                onSuccess = { built ->
+                    postToast("已现场创建并启用「${built.packName}」（${built.terms.size} 词）")
+                },
+                onFailure = { err ->
+                    postToast(err.message ?: "现场建词库失败")
+                }
+            )
+        }
+    }
+
     fun clearRecordingError() {
         coordinator.clearError()
     }
@@ -508,6 +522,10 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updatePinAcousticBar(pinned: Boolean) {
         viewModelScope.launch { settingsRepo.updatePinAcousticBar(pinned) }
+    }
+
+    fun updateAutoLiveGlossary(enabled: Boolean) {
+        viewModelScope.launch { settingsRepo.updateAutoLiveGlossary(enabled) }
     }
 
     fun updateMirrorSettings(useDomestic: Boolean, customBase: String) {

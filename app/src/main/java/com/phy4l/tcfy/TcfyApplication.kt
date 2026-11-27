@@ -2,6 +2,7 @@ package com.phy4l.tcfy
 
 import android.app.Application
 import com.phy4l.tcfy.ai.LectureRefinerAndSummarizer
+import com.phy4l.tcfy.ai.LiveGlossaryBuilder
 import com.phy4l.tcfy.ai.OpenAiCompatibleClient
 import com.phy4l.tcfy.ai.TranslationRouter
 import com.phy4l.tcfy.asr.ModelManager
@@ -29,6 +30,8 @@ class TcfyApplication : Application() {
         private set
     lateinit var refinerAndSummarizer: LectureRefinerAndSummarizer
         private set
+    lateinit var liveGlossaryBuilder: LiveGlossaryBuilder
+        private set
     lateinit var recordingCoordinator: RecordingCoordinator
         private set
 
@@ -40,12 +43,14 @@ class TcfyApplication : Application() {
         llmClient = OpenAiCompatibleClient()
         translationRouter = TranslationRouter(llmClient)
         refinerAndSummarizer = LectureRefinerAndSummarizer(llmClient)
+        liveGlossaryBuilder = LiveGlossaryBuilder(llmClient)
         recordingCoordinator = RecordingCoordinator(
             context = this,
             database = database,
             settingsRepo = settingsRepository,
             modelManager = modelManager,
-            translationRouter = translationRouter
+            translationRouter = translationRouter,
+            liveGlossaryBuilder = liveGlossaryBuilder
         )
 
         appScope.launch {

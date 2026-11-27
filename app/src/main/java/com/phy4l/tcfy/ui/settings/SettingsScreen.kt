@@ -395,6 +395,25 @@ fun SettingsScreen(viewModel: TcfyViewModel) {
                 )
             }
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("开讲 2-3 分钟自动 AI 现场建术语库", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "有网且已配 API 时自动分析课程主题、生成常用术语库并投入本次实时纠错（断网不影响离线录音）",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = settings.enableAutoLiveGlossary,
+                    onCheckedChange = { viewModel.updateAutoLiveGlossary(it) }
+                )
+            }
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 Button(
                     onClick = {

@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
@@ -268,11 +269,25 @@ fun RecordScreen(
             ) {
                 if (recState.isRecording) {
                     AssistChip(
+                        onClick = { viewModel.triggerLiveGlossaryBuild() },
+                        enabled = !recState.isBuildingLiveGlossary,
+                        leadingIcon = {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp))
+                        },
+                        label = {
+                            Text(
+                                text = if (recState.isBuildingLiveGlossary) "建词中..." else "AI词库",
+                                fontSize = 11.sp,
+                                maxLines = 1
+                            )
+                        }
+                    )
+                    AssistChip(
                         onClick = { viewModel.triggerLiveAutoTune() },
                         leadingIcon = {
-                            Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(14.dp))
                         },
-                        label = { Text("智能调参", fontSize = 11.sp, maxLines = 1) }
+                        label = { Text("调参", fontSize = 11.sp, maxLines = 1) }
                     )
                 } else if (showAcousticChips) {
                     TextButton(
@@ -471,6 +486,16 @@ fun RecordScreen(
                             text = summary,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    recState.liveGlossaryStatus?.let { status ->
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = status,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )

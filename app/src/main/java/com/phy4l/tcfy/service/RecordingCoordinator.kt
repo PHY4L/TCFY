@@ -1,6 +1,8 @@
 package com.phy4l.tcfy.service
 
 import android.content.Context
+import com.phy4l.tcfy.ai.LiveGlossaryBuildResult
+import com.phy4l.tcfy.ai.LiveGlossaryBuilder
 import com.phy4l.tcfy.ai.TranslationRouter
 import com.phy4l.tcfy.asr.ModelCatalog
 import com.phy4l.tcfy.asr.ModelManager
@@ -21,6 +23,8 @@ import com.phy4l.tcfy.audio.FarFieldDspPipeline
 import com.phy4l.tcfy.audio.LiveAcousticAutoTuner
 import com.phy4l.tcfy.audio.SpeechChunkOverlapBuffer
 import com.phy4l.tcfy.audio.SpeechEnhancer
+import com.phy4l.tcfy.data.db.GlossaryEntryEntity
+import com.phy4l.tcfy.data.db.GlossaryPackEntity
 import com.phy4l.tcfy.data.db.LectureSessionEntity
 import com.phy4l.tcfy.data.db.SegmentSyncStatus
 import com.phy4l.tcfy.data.db.TcfyDatabase
@@ -64,8 +68,8 @@ import java.util.concurrent.atomic.AtomicReference
  * AudioRecord (UNPROCESSED/CAMCORDER)
  *   ├─► CrashSafeWavWriter (raw 16kHz PCM continuously persisted to disk)
  *   └─► FarFieldDspPipeline (HPF + GTCRN + Adaptive AGC + Soft Limiter)
- *         └─► Silero VAD -> bounded Channel -> SenseVoice-Small int8
- *               └─► OfflineTermCorrector (aliases + pinyin/fuzzy)
+ *         └─► Silero VAD -> bounded Channel -> Offline ASR
+ *               └─► OfflineTermCorrector (aliases + pinyin/fuzzy + live AI glossary)
  *                     └─► TranslationRouter (offline-safe + optional online)
  *                           └─► Room SQLite (TranscriptSegmentEntity)
  */
@@ -74,7 +78,8 @@ class RecordingCoordinator(
     private val database: TcfyDatabase,
     private val settingsRepo: AppSettingsRepository,
     private val modelManager: ModelManager,
-    private val translationRouter: TranslationRouter
+    private val translationRouter: TranslationRouter,
+    private val liveGlossaryBuilder: LiveGlossaryBuilder? = null
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val json = Json { encodeDefaults = true }
@@ -88,12 +93,15 @@ class RecordingCoordinator(
     private val isMainAsrBusy = AtomicBoolean(false)
     private val bookmarkNextFlag = AtomicBoolean(false)
     private val segmentIndexCounter = AtomicInteger(0)
+    private val liveGlossaryBusyFlag = AtomicBoolean(false)
+    private val liveGlossaryBuiltFlag = AtomicBoolean(false)
 
     private var captureJob: Job? = null
     private var asrWorkerJob: Job? = null
     private var partialPreviewJob: Job? = null
     private var timerJob: Job? = null
     private var dspPipeline: FarFieldDspPipeline? = null
+    private var sessionLiveGlossaryPackId: Long? = null
     private val liveAutoTuner = LiveAcousticAutoTuner()
     private val pendingVadReloadConfig = AtomicReference<FarFieldDspConfig?>(null)
 
@@ -174,6 +182,79 @@ class RecordingCoordinator(
         }
     }
 
+    /**
+     * Analyzes the current recording's opening transcript with the configured LLM to infer
+     * the lecture topic and build/enrich an active on-the-fly glossary pack in Room.
+     * Immediately takes effect on all subsequent transcribed segments in this session.
+     */
+    suspend fun buildOrUpdateLiveGlossary(isAutoTrigger: Boolean = false): Result<LiveGlossaryBuildResult> {
+        val builder = liveGlossaryBuilder
+            ?: return Result.failure(IllegalStateException("现场词库构建器未初始化"))
+        val sessionId = _state.value.activeSessionId
+            ?: return Result.failure(IllegalStateException("当前未在录制中"))
+        if (!liveGlossaryBusyFlag.compareAndSet(false, true)) {
+            return Result.failure(IllegalStateException("AI 正在分析主题并构建本课术语库，请稍候..."))
+        }
+
+        _state.update {
+            it.copy(
+                isBuildingLiveGlossary = true,
+                liveGlossaryStatus = "AI 正在分析课程主题并构建本课术语库..."
+            )
+        }
+        return try {
+            val currentSettings = settingsRepo.settingsFlow.first()
+            val segments = withContext(Dispatchers.IO) { database.lectureDao().getSegments(sessionId) }
+            val activeTerms = withContext(Dispatchers.IO) {
+                database.glossaryDao().getActiveEntries().map { it.toDomain() }
+            }
+
+            val res = builder.buildFromTranscript(
+                segments = segments,
+                existingActiveTerms = activeTerms,
+                llmConfig = currentSettings.llmConfig
+            )
+            res.onSuccess { built ->
+                withContext(Dispatchers.IO) {
+                    val targetPackId = sessionLiveGlossaryPackId ?: database.glossaryDao().insertPack(
+                        GlossaryPackEntity(
+                            name = built.packName,
+                            description = built.description,
+                            isActive = true
+                        )
+                    ).also { sessionLiveGlossaryPackId = it }
+
+                    database.glossaryDao().insertEntries(
+                        built.terms.map { GlossaryEntryEntity.fromDomain(targetPackId, it) }
+                    )
+                }
+                liveGlossaryBuiltFlag.set(true)
+                _state.update {
+                    it.copy(
+                        isBuildingLiveGlossary = false,
+                        liveGlossaryStatus = "已启用现场词库：${built.topic}（+${built.terms.size} 词，已投入实时纠错）"
+                    )
+                }
+            }.onFailure { err ->
+                if (isAutoTrigger) {
+                    // Auto trigger fails silently so offline recording stays distraction-free
+                    liveGlossaryBuiltFlag.set(true)
+                    _state.update { it.copy(isBuildingLiveGlossary = false, liveGlossaryStatus = null) }
+                } else {
+                    _state.update {
+                        it.copy(
+                            isBuildingLiveGlossary = false,
+                            liveGlossaryStatus = "现场建词库失败：${err.message}"
+                        )
+                    }
+                }
+            }
+            res
+        } finally {
+            liveGlossaryBusyFlag.set(false)
+        }
+    }
+
     fun requestBookmarkCurrentOrNext() {
         val sessionId = _state.value.activeSessionId ?: return
         scope.launch(Dispatchers.IO) {
@@ -209,6 +290,9 @@ class RecordingCoordinator(
         isMainAsrBusy.set(false)
         bookmarkNextFlag.set(false)
         segmentIndexCounter.set(0)
+        liveGlossaryBuiltFlag.set(false)
+        liveGlossaryBusyFlag.set(false)
+        sessionLiveGlossaryPackId = null
         liveAutoTuner.reset()
         pendingVadReloadConfig.set(null)
 
@@ -313,11 +397,12 @@ class RecordingCoordinator(
                 warningMessage = warningMsg
             )
 
-            // Elapsed timer + scheduled automatic acoustic calibration under AUTO preset
+            // Elapsed timer + scheduled automatic acoustic calibration & optional AI live glossary
             timerJob = scope.launch {
                 val autoTuneCheckpointsMs = longArrayOf(30_000L, 90_000L, 180_000L)
                 var nextCheckpointIdx = 0
                 var lastAutoTuneMs = 0L
+                var lastGlossaryCheckMs = 0L
                 while (isActive) {
                     delay(500L)
                     if (!isPausedFlag.get()) {
@@ -344,6 +429,33 @@ class RecordingCoordinator(
                                 nextCheckpointIdx++
                             }
                             lastAutoTuneMs = elapsed
+                        }
+
+                        // Optional automatic AI live glossary after first ~1.5-3 minutes (non-blocking IO)
+                        if (liveGlossaryBuilder != null &&
+                            !liveGlossaryBuiltFlag.get() &&
+                            !liveGlossaryBusyFlag.get() &&
+                            elapsed >= 90_000L &&
+                            elapsed - lastGlossaryCheckMs >= 15_000L
+                        ) {
+                            lastGlossaryCheckMs = elapsed
+                            val curSettings = runCatching { settingsRepo.settingsFlow.first() }.getOrNull()
+                            if (curSettings != null &&
+                                curSettings.enableAutoLiveGlossary &&
+                                curSettings.llmConfig.isConfigured
+                            ) {
+                                val segs = runCatching {
+                                    withContext(Dispatchers.IO) { database.lectureDao().getSegments(sessionId) }
+                                }.getOrDefault(emptyList())
+                                val cleanChars = segs.sumOf {
+                                    it.displaySourceText.replace(Regex("[\\p{P}\\p{S}\\s]+"), "").length
+                                }
+                                if (LiveGlossaryBuilder.shouldAutoTrigger(elapsed, cleanChars, liveGlossaryBuiltFlag.get())) {
+                                    scope.launch(Dispatchers.IO) {
+                                        runCatching { buildOrUpdateLiveGlossary(isAutoTrigger = true) }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
