@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -46,6 +48,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -63,7 +66,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -89,6 +95,9 @@ private val spanJson = Json { ignoreUnknownKeys = true }
 @Composable
 fun RecordScreen(
     viewModel: TcfyViewModel,
+    listState: LazyListState = rememberLazyListState(),
+    autoFollowLatest: Boolean = true,
+    onAutoFollowChange: (Boolean) -> Unit = {},
     onRequestMicPermissionAndStart: () -> Unit,
     onNavigateToModels: () -> Unit
 ) {
@@ -97,20 +106,41 @@ fun RecordScreen(
     val segments by viewModel.liveSegments.collectAsState()
     val packs by viewModel.glossaryPacks.collectAsState()
     val modelStates by viewModel.modelStates.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
 
     val coreReady = remember(modelStates) { viewModel.isCoreAsrReady() }
-    val listState = rememberLazyListState()
     var showDirectionMenu by remember { mutableStateOf(false) }
     var inspectedSegment by remember { mutableStateOf<TranscriptSegmentEntity?>(null) }
+    val hasPartial = recState.partialTranscript.isNotBlank()
+    val totalListItems = RecordScrollPolicy.totalListItems(segments.size, hasPartial)
 
-    // Smart auto-scroll: only jump to bottom when user is already near the latest items
-    LaunchedEffect(segments.size) {
-        if (segments.isNotEmpty()) {
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            val nearBottom = segments.size <= 2 || lastVisible >= segments.lastIndex - 3
-            if (nearBottom) {
-                listState.animateScrollToItem(segments.lastIndex)
+    // Detect user manual scroll gestures to pause/resume auto-follow without interfering with tab return
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+            val total = listState.layoutInfo.totalItemsCount
+            Triple(listState.isScrollInProgress, lastVisible, total)
+        }.collect { (scrolling, lastVisible, total) ->
+            if (scrolling && total > 0) {
+                onAutoFollowChange(RecordScrollPolicy.isNearLatest(lastVisible, total))
             }
+        }
+    }
+
+    // Returning from another tab: jump immediately to the latest transcript when following latest
+    LaunchedEffect(Unit) {
+        val target = RecordScrollPolicy.targetIndexOnTabEnter(totalListItems, autoFollowLatest)
+        if (target != null) {
+            listState.scrollToItem(target)
+        }
+    }
+
+    // Smart auto-scroll when new segments or live partial preview arrive
+    LaunchedEffect(totalListItems) {
+        val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+        val target = RecordScrollPolicy.targetIndexOnNewItems(totalListItems, autoFollowLatest, lastVisible)
+        if (target != null) {
+            listState.animateScrollToItem(target)
         }
     }
 
@@ -397,6 +427,29 @@ fun RecordScreen(
                                 }
                             }
                         }
+                    }
+                }
+                if (!autoFollowLatest && totalListItems > 2) {
+                    FilledTonalButton(
+                        onClick = {
+                            onAutoFollowChange(true)
+                            coroutineScope.launch {
+                                listState.animateScrollToItem((totalListItems - 1).coerceAtLeast(0))
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 4.dp, bottom = 8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowDown,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text("回到最新", fontSize = 12.sp)
                     }
                 }
             }

@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.History
@@ -56,6 +57,8 @@ fun TcfyApp(viewModel: TcfyViewModel = viewModel()) {
 
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var openSessionId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val recordListState = rememberLazyListState()
+    var recordAutoFollow by rememberSaveable { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
         viewModel.toastMessages.collect { msg ->
@@ -137,6 +140,9 @@ fun TcfyApp(viewModel: TcfyViewModel = viewModel()) {
             when (MainTab.entries[selectedTab]) {
                 MainTab.RECORD -> RecordScreen(
                     viewModel = viewModel,
+                    listState = recordListState,
+                    autoFollowLatest = recordAutoFollow,
+                    onAutoFollowChange = { recordAutoFollow = it },
                     onRequestMicPermissionAndStart = ::requestPermissionsAndStart,
                     onNavigateToModels = { selectedTab = MainTab.SETTINGS.ordinal }
                 )
