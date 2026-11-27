@@ -28,8 +28,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -78,6 +80,8 @@ fun SettingsScreen(viewModel: TcfyViewModel) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val settings by viewModel.settings.collectAsState()
     val modelStates by viewModel.modelStates.collectAsState()
+    val mirrorProbeResults by viewModel.mirrorProbeResults.collectAsState()
+    val isProbingMirrors by viewModel.isProbingMirrors.collectAsState()
 
     var pendingImportModel by remember { mutableStateOf<ModelDescriptor?>(null) }
     val modelFilePicker = rememberLauncherForActivityResult(
@@ -108,12 +112,13 @@ fun SettingsScreen(viewModel: TcfyViewModel) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Local editable state for LLM API form
+    // Local editable state for LLM API & custom mirror form
     var providerName by remember(settings.llmConfig.providerName) { mutableStateOf(settings.llmConfig.providerName) }
     var baseUrl by remember(settings.llmConfig.baseUrl) { mutableStateOf(settings.llmConfig.baseUrl) }
     var apiKey by remember(settings.llmConfig.apiKey) { mutableStateOf(settings.llmConfig.apiKey) }
     var showApiKey by remember { mutableStateOf(false) }
     var modelName by remember(settings.llmConfig.modelName) { mutableStateOf(settings.llmConfig.modelName) }
+    var customMirrorInput by remember(settings.customMirrorBase) { mutableStateOf(settings.customMirrorBase) }
     var testResultText by remember { mutableStateOf<String?>(null) }
     var isTestingApi by remember { mutableStateOf(false) }
 
@@ -139,26 +144,107 @@ fun SettingsScreen(viewModel: TcfyViewModel) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("使用国内加速镜像 (hf-mirror.com)", style = MaterialTheme.typography.bodyMedium)
+                    Text("启用国内多镜像自动测速优选", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "国行手机直连更快；也可点击「本地导入」直接导入同学传的模型包",
+                        "下载前并发 Ping 测速全部镜像源，按延迟从低到高自动优先与失败降级",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Switch(
                     checked = settings.useDomesticMirror,
-                    onCheckedChange = { viewModel.updateMirrorSettings(it, settings.customMirrorBase) }
+                    onCheckedChange = { viewModel.updateMirrorSettings(it, customMirrorInput) }
                 )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { viewModel.probeMirrorLatencies() },
+                    enabled = !isProbingMirrors
+                ) {
+                    Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(if (isProbingMirrors) "测速中..." else "测试镜像源延迟")
+                }
+                if (customMirrorInput != settings.customMirrorBase) {
+                    Button(
+                        onClick = { viewModel.updateMirrorSettings(settings.useDomesticMirror, customMirrorInput) }
+                    ) {
+                        Text("保存镜像")
+                    }
+                }
+            }
+
+            OutlinedTextField(
+                value = customMirrorInput,
+                onValueChange = { customMirrorInput = it },
+                label = { Text("自定义 HF 镜像地址（可选，如 https://hf-mirror.com）") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            if (mirrorProbeResults.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    mirrorProbeResults.forEach { r ->
+                        val label = if (r.reachable) {
+                            "${r.candidate.mirror.label} · ${r.latencyMs}ms"
+                        } else {
+                            "${r.candidate.mirror.label} · 不可达"
+                        }
+                        AssistChip(
+                            onClick = {},
+                            label = { Text(label, style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
+                }
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-            ModelCatalog.ALL_MODELS.forEach { model ->
+            Text(
+                text = "语音识别模型（按需下载多语或单语模型，装好可随时切换）",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            ModelCatalog.ASR_MODELS.forEach { model ->
+                val state = modelStates[model.id] ?: ModelInstallState.NotInstalled
+                val isSelected = settings.activeAsrModelId == model.id
+                ModelItemRow(
+                    descriptor = model,
+                    state = state,
+                    isActiveAsr = isSelected,
+                    onSelectAsr = { viewModel.selectActiveAsrModel(model) },
+                    onDownload = { viewModel.downloadModel(model) },
+                    onImportLocal = {
+                        pendingImportModel = model
+                        modelFilePicker.launch(arrayOf("*/*"))
+                    },
+                    onDelete = { viewModel.deleteModel(model) }
+                )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+            }
+
+            Text(
+                text = "已内置基础组件（<1MB，随安装包开箱即用，免下载）",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            ModelCatalog.SUPPORT_MODELS.forEach { model ->
                 val state = modelStates[model.id] ?: ModelInstallState.NotInstalled
                 ModelItemRow(
                     descriptor = model,
                     state = state,
+                    isActiveAsr = false,
+                    onSelectAsr = {},
                     onDownload = { viewModel.downloadModel(model) },
                     onImportLocal = {
                         pendingImportModel = model
@@ -510,6 +596,8 @@ private fun SectionCard(
 private fun ModelItemRow(
     descriptor: ModelDescriptor,
     state: ModelInstallState,
+    isActiveAsr: Boolean,
+    onSelectAsr: () -> Unit,
     onDownload: () -> Unit,
     onImportLocal: () -> Unit,
     onDelete: () -> Unit
@@ -521,8 +609,9 @@ private fun ModelItemRow(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(modifier = Modifier.weight(1f)) {
+                val sizeLabel = if (descriptor.bundledAssetPath != null) "<1MB" else "~${descriptor.approxSizeMb}MB"
                 Text(
-                    text = "${descriptor.displayName} (~${descriptor.approxSizeMb}MB)",
+                    text = "${descriptor.displayName} ($sizeLabel)",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -551,18 +640,42 @@ private fun ModelItemRow(
             }
             is ModelInstallState.Installed -> {
                 val mb = state.totalBytes / (1024f * 1024f)
+                val sizeStr = if (mb < 1f) "${(state.totalBytes / 1024L)} KB" else "${"%.1f".format(mb)} MB"
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "已就绪 (${"%.1f".format(mb)} MB · 纯离线运行)",
+                        text = if (state.isBundled) {
+                            "已内置就绪 ($sizeStr · 开箱即用)"
+                        } else if (isActiveAsr) {
+                            "当前使用中 ($sizeStr · 纯离线运行)"
+                        } else {
+                            "已就绪 ($sizeStr · 纯离线运行)"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.DeleteOutline, contentDescription = "删除模型", modifier = Modifier.size(18.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (descriptor.type.isAsrModel) {
+                            if (isActiveAsr) {
+                                FilterChip(
+                                    selected = true,
+                                    onClick = {},
+                                    label = { Text("使用中") }
+                                )
+                            } else {
+                                OutlinedButton(onClick = onSelectAsr) {
+                                    Text("设为当前")
+                                }
+                            }
+                        }
+                        if (!state.isBundled) {
+                            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Default.DeleteOutline, contentDescription = "删除模型", modifier = Modifier.size(18.dp))
+                            }
+                        }
                     }
                 }
             }
@@ -586,7 +699,7 @@ private fun ModelItemRow(
                     Button(onClick = onDownload) {
                         Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("下载模型")
+                        Text("测速下载")
                     }
                     OutlinedButton(onClick = onImportLocal) {
                         Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))

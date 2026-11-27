@@ -8,6 +8,7 @@ import com.phy4l.tcfy.asr.ModelCatalog
 import com.phy4l.tcfy.asr.ModelManager
 import com.phy4l.tcfy.asr.OfflineAsrEngine
 import com.phy4l.tcfy.asr.SherpaGtcrnEnhancer
+import com.phy4l.tcfy.asr.SherpaOfflineAsrFactory
 import com.phy4l.tcfy.asr.SherpaSenseVoiceEngine
 import com.phy4l.tcfy.asr.SherpaSileroVadEngine
 import com.phy4l.tcfy.asr.VadSegmenter
@@ -314,11 +315,12 @@ class RecordingCoordinator(
             var warningMsg: String? = null
             var asrLabel = "仅录音保底（待下载离线模型）"
 
-            if (modelManager.isCoreAsrReady()) {
+            val activeAsrModel = modelManager.resolveActiveAsrModel(settings.activeAsrModelId)
+            if (activeAsrModel != null && modelManager.isInstalled(ModelCatalog.SILERO_VAD)) {
                 asrEngine = withContext(Dispatchers.IO) {
-                    SherpaSenseVoiceEngine(
-                        modelFile = modelManager.getPrimaryModelFile(ModelCatalog.SENSEVOICE_INT8),
-                        tokensFile = modelManager.getTokensFile(ModelCatalog.SENSEVOICE_INT8),
+                    SherpaOfflineAsrFactory.create(
+                        descriptor = activeAsrModel,
+                        modelDir = modelManager.getModelDir(activeAsrModel),
                         languageMode = settings.asrLanguageMode,
                         numThreads = settings.asrThreads
                     )
@@ -346,13 +348,14 @@ class RecordingCoordinator(
                         }
                     }.getOrNull()
                 }
+                val shortModelName = activeAsrModel.displayName.substringBefore(" (")
                 asrLabel = if (gtcrnEnhancer != null) {
-                    "离线 SenseVoice + GTCRN 远场增强"
+                    "离线 $shortModelName + GTCRN 远场增强"
                 } else {
-                    "离线 SenseVoice (DSP 远场增益)"
+                    "离线 $shortModelName (DSP 远场增益)"
                 }
             } else {
-                warningMsg = "未安装离线语音模型：当前已开启原始远场录音保底，课后在「模型设置」下载模型即可一键离线转写。"
+                warningMsg = "未安装离线语音识别模型：当前已开启原始远场录音保底，课后在「模型设置」按需下载中文/英文/多语模型即可离线转写。"
             }
 
             if (isStoppingFlag.get()) {
@@ -736,6 +739,9 @@ class RecordingCoordinator(
             require(sampleRate == 16000) { "仅支持 16kHz 音频重转写 (当前 ${sampleRate}Hz)" }
 
             onProgress(0.12f, "正在加载离线语音模型...")
+            val activeAsrModel = modelManager.resolveActiveAsrModel(settings.activeAsrModelId)
+                ?: throw IllegalStateException("请先在「模型设置」下载至少一个离线语音识别模型")
+
             val gtcrn = if (settings.dspConfig.denoiseLevel != DenoiseLevel.OFF &&
                 modelManager.isInstalled(ModelCatalog.GTCRN_DENOISER)
             ) {
@@ -749,9 +755,9 @@ class RecordingCoordinator(
                 minSilenceDurationSec = settings.dspConfig.vadMinSilenceSec,
                 maxSpeechDurationSec = settings.dspConfig.vadMaxSpeechSec
             )
-            val asr = SherpaSenseVoiceEngine(
-                modelFile = modelManager.getPrimaryModelFile(ModelCatalog.SENSEVOICE_INT8),
-                tokensFile = modelManager.getTokensFile(ModelCatalog.SENSEVOICE_INT8),
+            val asr = SherpaOfflineAsrFactory.create(
+                descriptor = activeAsrModel,
+                modelDir = modelManager.getModelDir(activeAsrModel),
                 languageMode = settings.asrLanguageMode,
                 numThreads = settings.asrThreads
             )

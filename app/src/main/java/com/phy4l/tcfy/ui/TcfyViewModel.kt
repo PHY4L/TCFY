@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.phy4l.tcfy.TcfyApplication
 import com.phy4l.tcfy.ai.RefinementProgress
 import com.phy4l.tcfy.asr.AsrLanguageMode
+import com.phy4l.tcfy.asr.MirrorProbeResult
 import com.phy4l.tcfy.asr.ModelDescriptor
 import com.phy4l.tcfy.asr.ModelInstallState
 import com.phy4l.tcfy.audio.AcousticPreset
@@ -95,6 +96,12 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _detailTaskStates = MutableStateFlow<Map<Long, DetailTaskState>>(emptyMap())
     val detailTaskStates: StateFlow<Map<Long, DetailTaskState>> = _detailTaskStates.asStateFlow()
+
+    private val _mirrorProbeResults = MutableStateFlow<List<MirrorProbeResult>>(emptyList())
+    val mirrorProbeResults: StateFlow<List<MirrorProbeResult>> = _mirrorProbeResults.asStateFlow()
+
+    private val _isProbingMirrors = MutableStateFlow(false)
+    val isProbingMirrors: StateFlow<Boolean> = _isProbingMirrors.asStateFlow()
 
     private val _toastChannel = Channel<String>(Channel.BUFFERED)
     val toastMessages: Flow<String> = _toastChannel.receiveAsFlow()
@@ -556,15 +563,50 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun selectActiveAsrModel(descriptor: ModelDescriptor) {
+        if (!descriptor.type.isAsrModel || !modelManager.isInstalled(descriptor)) return
+        viewModelScope.launch {
+            settingsRepo.updateActiveAsrModelId(descriptor.id)
+            postToast("已切换当前离线识别模型：${descriptor.displayName}")
+        }
+    }
+
+    fun probeMirrorLatencies() {
+        if (_isProbingMirrors.value) return
+        viewModelScope.launch {
+            _isProbingMirrors.value = true
+            try {
+                val s = settings.value
+                val results = modelManager.probeMirrorLatencies(
+                    useDomesticMirror = s.useDomesticMirror,
+                    customMirrorBase = s.customMirrorBase
+                )
+                _mirrorProbeResults.value = results
+                val fastest = results.firstOrNull { it.reachable }
+                if (fastest != null) {
+                    postToast("测速完成：最快镜像 ${fastest.candidate.mirror.label} (${fastest.latencyMs}ms)")
+                } else {
+                    postToast("当前网络暂不可达各镜像源，请检查网络或使用「本地导入」")
+                }
+            } finally {
+                _isProbingMirrors.value = false
+            }
+        }
+    }
+
     fun downloadModel(descriptor: ModelDescriptor) {
         viewModelScope.launch {
             val s = settings.value
+            val hadActiveAsr = modelManager.resolveActiveAsrModel(s.activeAsrModelId) != null
             val res = modelManager.downloadModel(
                 descriptor = descriptor,
                 useDomesticMirror = s.useDomesticMirror,
                 customMirrorBase = s.customMirrorBase
             )
             if (res.isSuccess) {
+                if (descriptor.type.isAsrModel && !hadActiveAsr) {
+                    settingsRepo.updateActiveAsrModelId(descriptor.id)
+                }
                 postToast("${descriptor.displayName} 下载完成")
             }
         }
@@ -572,9 +614,14 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
 
     fun importLocalModel(descriptor: ModelDescriptor, uri: Uri) {
         viewModelScope.launch {
+            val s = settings.value
+            val hadActiveAsr = modelManager.resolveActiveAsrModel(s.activeAsrModelId) != null
             val name = resolveFileName(uri) ?: "model.onnx"
             val res = modelManager.importLocalModel(descriptor, uri, name)
             if (res.isSuccess) {
+                if (descriptor.type.isAsrModel && !hadActiveAsr) {
+                    settingsRepo.updateActiveAsrModelId(descriptor.id)
+                }
                 postToast("已导入 ${descriptor.displayName}")
             }
         }
@@ -582,7 +629,13 @@ class TcfyViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteModel(descriptor: ModelDescriptor) {
         modelManager.deleteModel(descriptor)
-        postToast("已移除 ${descriptor.displayName}")
+        if (descriptor.id == settings.value.activeAsrModelId) {
+            val fallback = modelManager.resolveActiveAsrModel("")
+            if (fallback != null) {
+                viewModelScope.launch { settingsRepo.updateActiveAsrModelId(fallback.id) }
+            }
+        }
+        postToast(if (descriptor.bundledAssetPath != null) "已恢复内置模型：${descriptor.displayName}" else "已移除 ${descriptor.displayName}")
     }
 
     private fun resolveFileName(uri: Uri): String? {

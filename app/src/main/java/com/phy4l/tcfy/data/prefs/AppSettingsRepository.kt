@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.phy4l.tcfy.asr.AsrLanguageMode
+import com.phy4l.tcfy.asr.ModelCatalog
 import com.phy4l.tcfy.audio.AcousticPreset
 import com.phy4l.tcfy.audio.AudioSourceMode
 import com.phy4l.tcfy.audio.DenoiseLevel
@@ -34,6 +35,7 @@ data class LlmApiConfig(
 data class AppSettings(
     val dspConfig: FarFieldDspConfig = AcousticPreset.CLASSROOM_FAR_FIELD.config,
     val acousticPresetName: String = AcousticPreset.CLASSROOM_FAR_FIELD.name,
+    val activeAsrModelId: String = ModelCatalog.SENSEVOICE_INT8.id,
     val asrLanguageMode: AsrLanguageMode = AsrLanguageMode.AUTO,
     val asrThreads: Int = 4,
     val translationDirection: TranslationDirection = TranslationDirection.AUTO_BILINGUAL,
@@ -62,6 +64,7 @@ class AppSettingsRepository(private val context: Context) {
         val PA_ANTI_RESONANCE = booleanPreferencesKey("pa_anti_resonance")
         val FAST_SPEECH_MODE = booleanPreferencesKey("fast_speech_mode")
 
+        val ACTIVE_ASR_MODEL_ID = stringPreferencesKey("active_asr_model_id")
         val ASR_LANGUAGE = stringPreferencesKey("asr_language")
         val ASR_THREADS = intPreferencesKey("asr_threads")
         val TRANS_DIRECTION = stringPreferencesKey("trans_direction")
@@ -108,6 +111,7 @@ class AppSettingsRepository(private val context: Context) {
         AppSettings(
             dspConfig = dsp,
             acousticPresetName = basePreset.name,
+            activeAsrModelId = prefs[Keys.ACTIVE_ASR_MODEL_ID] ?: ModelCatalog.SENSEVOICE_INT8.id,
             asrLanguageMode = prefs[Keys.ASR_LANGUAGE]?.let {
                 runCatching { AsrLanguageMode.valueOf(it) }.getOrNull()
             } ?: AsrLanguageMode.AUTO,
@@ -163,6 +167,10 @@ class AppSettingsRepository(private val context: Context) {
             p[Keys.PA_ANTI_RESONANCE] = dsp.paAntiResonance
             p[Keys.FAST_SPEECH_MODE] = dsp.fastSpeechMode
         }
+    }
+
+    suspend fun updateActiveAsrModelId(modelId: String) {
+        context.tcfyDataStore.edit { it[Keys.ACTIVE_ASR_MODEL_ID] = modelId }
     }
 
     suspend fun updateAsrLanguage(mode: AsrLanguageMode) {
